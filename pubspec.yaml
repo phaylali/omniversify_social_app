@@ -1,0 +1,43 @@
+name: omniversify_social_app
+description: "A social profile app showcasing interests, powered by Omniversify Widget."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.14.0-221.0.dev
+
+dependencies:
+  flutter:
+    sdk: flutter
+  omniversify_widget:
+    path: ../omniversify_widget
+  flutter_riverpod: ^3.4.3
+  go_router: ^18.0.1
+  google_fonts: ^8.2.1
+  uuid: ^4.5.1
+  intl: ^0.20.3
+  cached_network_image: ^4.0.0
+  mobile_scanner: ^7.0.0
+  permission_handler: ^13.0.1
+  url_launcher: ^6.3.1
+  audioplayers: ^6.1.0
+  audio_service: ^0.18.19
+  shared_preferences: ^2.5.0
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_video: ^1.0.5
+  flutter_dotenv: ^6.0.1
+  http: ^1.2.0
+  camera: ^0.12.1
+  flutter_taglib: ^1.5.2
+  share_plus: ^13.3.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
+    - assets/tones/
