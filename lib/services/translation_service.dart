@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../core/config/api_config.dart';
 
 class TranslationService {
   TranslationService._();
 
-  static const _tifinaghBase = 'https://omniversify-tifinagh-dictionary-api.omniversify.com';
+  static final _tifinaghBase = ApiConfig.tifinaghApiUrl;
   static const _googleBase = 'https://translate.googleapis.com/translate_a/single';
 
   static Future<String> transliterate(String text, {required String from, required String to}) async {

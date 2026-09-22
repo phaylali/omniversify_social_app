@@ -142,6 +142,23 @@ class ApiConfig {
       ? 'https://openlibrary.org/api'
       : _get('OPEN_LIBRARY_BASE_URL');
 
+  // ─── Omniversify Sub-Services ──────────────────────────────
+
+  /// Moroccan triple-date API (Gregorian / Islamic / Amazigh)
+  static String get moroccoDateApiUrl => _get('MOROCCO_DATE_API_URL').isEmpty
+      ? 'https://morocco-date-api.omniversify.com/api'
+      : _get('MOROCCO_DATE_API_URL');
+
+  /// Tifinagh transliteration & dictionary API
+  static String get tifinaghApiUrl => _get('TIFINAGH_API_URL').isEmpty
+      ? 'https://omniversify-tifinagh-dictionary-api.omniversify.com'
+      : _get('TIFINAGH_API_URL');
+
+  /// Omniversify app frontend base URL (for share links)
+  static String get omniversifyAppUrl => _get('OMNIVERSIFY_APP_URL').isEmpty
+      ? 'https://app.omniversify.com'
+      : _get('OMNIVERSIFY_APP_URL');
+
   // ─── Helpers ───────────────────────────────────────────────
 
   /// Check if a required API key is configured

@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../core/config/api_config.dart';
 
 class DateService {
   DateService._();
 
-  static const _base = 'https://morocco-date-api.omniversify.com/api';
+  static final _base = ApiConfig.moroccoDateApiUrl;
 
   static Future<TripleDate> fetchToday() async {
     final resp = await http.get(Uri.parse('$_base/date'));

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/post.dart';
 import '../data/post_state.dart';
+import '../core/config/api_config.dart';
 import 'post_interaction_panel.dart';
 
 class PostHeader extends StatelessWidget {
@@ -78,7 +79,7 @@ class PostHeader extends StatelessWidget {
           constraints: const BoxConstraints(),
           onSelected: (value) {
             if (value == 'copy_link') {
-              Clipboard.setData(ClipboardData(text: 'https://app.omniversify.com/post/${name.toLowerCase()}'));
+              Clipboard.setData(ClipboardData(text: '${ApiConfig.omniversifyAppUrl}/post/${name.toLowerCase()}'));
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Link copied to clipboard'),
