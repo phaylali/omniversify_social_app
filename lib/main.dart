@@ -5,6 +5,7 @@ import 'package:omniversify_widget/omniversify_widget.dart';
 import 'core/config/api_config.dart';
 import 'models/post.dart';
 import 'data/dummy_data.dart';
+import 'services/audio_player_service.dart';
 import 'widgets/widgets.dart';
 import 'widgets/date_header_widget.dart';
 import 'screens/scrolls_screen.dart';
@@ -15,6 +16,11 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   await ApiConfig.load();
+  // Start media session + load persisted player settings before first frame
+  // so the Android notification is ready as soon as playback begins.
+  final audio = AudioPlayerService.instance;
+  await audio.init();
+  await audio.connectAudioService();
   runApp(const ProviderScope(child: OmniversifySocialApp()));
 }
 

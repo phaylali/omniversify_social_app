@@ -11,10 +11,14 @@ import 'taglib_audio_service.dart';
 class AudioMetadataExtractor {
   /// Extract metadata for a list of songs, 8 at a time for speed.
   /// Reports progress via [onProgress] for a real counter UI.
+  ///
+  /// [includeArtwork] defaults to false: album art is large and loaded
+  /// lazily by [ArtworkLoader] for visible rows only.
   static Future<List<SongItem>> extractAll(
     List<SongItem> songs, {
     void Function(int done, int total)? onProgress,
     bool useCache = true,
+    bool includeArtwork = false,
   }) async {
     final cache = AudioMetadataCache();
     if (useCache) await cache.load();
@@ -26,7 +30,12 @@ class AudioMetadataExtractor {
       final end = (i + batch < songs.length) ? i + batch : songs.length;
       final chunk = <Future<void>>[];
       for (var j = i; j < end; j++) {
-        chunk.add(_extractOneCached(songs[j], cache, useCache).then((s) {
+        chunk.add(_extractOneCached(
+          songs[j],
+          cache,
+          useCache,
+          includeArtwork: includeArtwork,
+        ).then((s) {
           results[j] = s;
           done++;
           onProgress?.call(done, songs.length);
@@ -44,21 +53,23 @@ class AudioMetadataExtractor {
   static Future<SongItem> _extractOneCached(
     SongItem song,
     AudioMetadataCache cache,
-    bool useCache,
-  ) async {
+    bool useCache, {
+    bool includeArtwork = false,
+  }) async {
     if (useCache) {
       try {
         final st = await AudioMetadataCache.stat(song.path);
         if (st != null) {
           final hit = cache.get(song.path, st.$1, st.$2);
           if (hit != null) {
-            // Cache hit: duration/tags known. Still grab artwork
-            // (fast ID3 read, not cached because it is large).
+            // Cache hit: duration/tags known. Artwork only when requested.
             List<int>? artwork = song.artworkBytes;
-            try {
-              final tags = await _parseId3v2(song.path);
-              artwork = tags['artwork'] ?? artwork;
-            } catch (_) {}
+            if (includeArtwork) {
+              try {
+                final tags = await _parseId3v2(song.path);
+                artwork = tags['artwork'] ?? artwork;
+              } catch (_) {}
+            }
             return SongItem(
               id: song.id,
               title: song.title,
@@ -68,12 +79,14 @@ class AudioMetadataExtractor {
               path: song.path,
               folder: song.folder,
               artworkBytes: artwork,
+              dbId: song.dbId,
             );
           }
         }
       } catch (_) {}
     }
-    final out = await extractOne(song);
+    final out =
+        await extractOne(song, includeArtwork: includeArtwork);
     if (useCache) {
       try {
         final st = await AudioMetadataCache.stat(song.path);
@@ -91,9 +104,12 @@ class AudioMetadataExtractor {
   }
 
   /// Extract metadata for a single song.
-  /// Primary: dart_taglib (exact TagLib duration/tags).
-  /// Fallback: pure-Dart headers + ID3v2 (artwork always via ID3 for now).
-  static Future<SongItem> extractOne(SongItem song) async {
+  /// Primary: flutter_taglib (exact TagLib duration/tags).
+  /// Fallback: pure-Dart headers + ID3v2.
+  static Future<SongItem> extractOne(
+    SongItem song, {
+    bool includeArtwork = false,
+  }) async {
     int? duration;
     List<int>? artwork;
     String? artist;
@@ -106,16 +122,18 @@ class AudioMetadataExtractor {
       artist = meta.artist;
       album = meta.album;
       title = meta.title;
-      if (meta.coverBytes != null && meta.coverBytes!.isNotEmpty) {
+      if (includeArtwork &&
+          meta.coverBytes != null &&
+          meta.coverBytes!.isNotEmpty) {
         artwork = meta.coverBytes!.toList();
       }
     } catch (_) {}
 
     try {
-      final tags = await _parseId3v2(song.path);
+      final tags = await _parseId3v2(song.path, includeArtwork: includeArtwork);
       artist ??= tags['artist'];
       album ??= tags['album'];
-      artwork ??= tags['artwork'];
+      if (includeArtwork) artwork ??= tags['artwork'];
       // Prefer embedded title only when filename looks like a numbered dump
       // (e.g. "001. Queen - Bohemian Rhapsody" already carries the title).
       if (title != null &&
@@ -136,12 +154,34 @@ class AudioMetadataExtractor {
       duration: duration ?? song.duration,
       path: song.path,
       folder: song.folder,
-      artworkBytes: artwork ?? song.artworkBytes,
+      artworkBytes: includeArtwork ? (artwork ?? song.artworkBytes) : null,
+      dbId: song.dbId,
     );
   }
 
+  /// Lazy single-file artwork extract (TagLib cover → ID3 APIC).
+  /// Used by [ArtworkLoader]; not part of the bulk scan.
+  static Future<List<int>?> extractArtwork(String path) async {
+    try {
+      final meta = await TaglibAudioService.getMetadata(path);
+      if (meta.coverBytes != null && meta.coverBytes!.isNotEmpty) {
+        return meta.coverBytes!.toList();
+      }
+    } catch (_) {}
+    try {
+      final tags = await _parseId3v2(path, includeArtwork: true);
+      final art = tags['artwork'];
+      if (art is List<int> && art.isNotEmpty) return art;
+    } catch (_) {}
+    return null;
+  }
+
   /// Parse ID3v2 tags from an MP3 file.
-  static Future<Map<String, dynamic>> _parseId3v2(String path) async {
+  /// When [includeArtwork] is false, APIC frames are skipped (large payload).
+  static Future<Map<String, dynamic>> _parseId3v2(
+    String path, {
+    bool includeArtwork = true,
+  }) async {
     final result = <String, dynamic>{};
     try {
       final file = File(path);
@@ -185,7 +225,7 @@ class AudioMetadataExtractor {
           result['artist'] = _parseTextFrame(frameData);
         } else if (frameId == 'TALB') {
           result['album'] = _parseTextFrame(frameData);
-        } else if (frameId == 'APIC') {
+        } else if (frameId == 'APIC' && includeArtwork) {
           result['artwork'] = _parseApicFrame(frameData);
         }
 
@@ -220,7 +260,7 @@ class AudioMetadataExtractor {
       // Read MIME type (null-terminated)
       var end = data.indexOf(0x00, pos);
       if (end < 0) return null;
-      final mime = String.fromCharCodes(data.sublist(pos, end));
+      // mime intentionally unused — only used to locate the image payload
       pos = end + 1;
       // Skip picture type
       pos++;

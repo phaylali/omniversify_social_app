@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:math';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/song_item.dart';
+import 'artwork_loader.dart';
+import 'widget_service.dart';
 
 /// Repeat modes for the music player.
 ///
@@ -15,14 +18,20 @@ enum MusicRepeatMode { off, one, all }
 /// Responsibilities:
 /// - Manages a playlist of [SongItem]s and current playback index.
 /// - Provides shuffle and repeat (off / one / all) modes.
+/// - Persists shuffle / repeat / volume across app launches.
 /// - Connects to [audio_service] to expose an Android media notification
 ///   with play/pause/next/prev/seek controls.
+/// - Pushes now-playing state to the Android home-screen widget.
 /// - Exposes a [stateStream] that UI widgets listen to for rebuilds.
 ///
 /// All state is held here; the music player screen is a pure consumer.
 class AudioPlayerService {
   AudioPlayerService._();
   static final AudioPlayerService instance = AudioPlayerService._();
+
+  static const String _kShuffle = 'music_shuffle_on';
+  static const String _kRepeat = 'music_repeat_mode';
+  static const String _kVolume = 'music_volume';
 
   /// Underlying audioplayers instance — exposed for advanced use.
   final AudioPlayer _player = AudioPlayer();
@@ -64,21 +73,31 @@ class AudioPlayerService {
   /// Broadcast stream for any state change — UI widgets listen here.
   final _stateController = StreamController<void>.broadcast();
   Stream<void> get stateStream => _stateController.stream;
-  bool _initialized = false;
+  Future<void>? _initFuture;
+  Future<void>? _prefsFuture;
 
   /// audio_service handler for Android notification / media session.
   MusicAudioHandler? _audioHandler;
+  String? _lastArtPath;
+  String? _lastArtSongPath;
 
-  /// Emit a state change to the stream and update the media session.
+  /// Emit a state change to the stream, update media session + widget.
   void _emit() {
     if (!_stateController.isClosed) _stateController.add(null);
     _updateMediaItem();
+    _updateWidget();
   }
 
-  /// Initialize player listeners. Safe to call multiple times (idempotent).
-  void init() {
-    if (_initialized) return;
-    _initialized = true;
+  /// Initialize player listeners + restore persisted settings.
+  /// Safe to call multiple times (idempotent).
+  Future<void> init() {
+    if (_initFuture != null) return _initFuture!;
+    _initFuture = _doInit();
+    return _initFuture!;
+  }
+
+  Future<void> _doInit() async {
+    await _loadPrefs();
 
     _player.onDurationChanged.listen((d) {
       if (d > Duration.zero) {
@@ -94,6 +113,42 @@ class AudioPlayerService {
 
     // Track completion handler — decides next track based on repeat/shuffle.
     _player.onPlayerComplete.listen((_) => _onComplete());
+
+    try {
+      await _player.setVolume(_volume);
+    } catch (_) {}
+  }
+
+  Future<void> _loadPrefs() async {
+    if (_prefsFuture != null) return _prefsFuture!;
+    _prefsFuture = _loadPrefsImpl();
+    return _prefsFuture!;
+  }
+
+  Future<void> _loadPrefsImpl() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _shuffleOn = prefs.getBool(_kShuffle) ?? _shuffleOn;
+      final r = prefs.getString(_kRepeat);
+      if (r != null) {
+        for (final mode in MusicRepeatMode.values) {
+          if (mode.name == r) {
+            _repeatMode = mode;
+            break;
+          }
+        }
+      }
+      _volume = (prefs.getDouble(_kVolume) ?? _volume).clamp(0.0, 1.0);
+    } catch (_) {}
+  }
+
+  Future<void> _savePrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kShuffle, _shuffleOn);
+      await prefs.setString(_kRepeat, _repeatMode.name);
+      await prefs.setDouble(_kVolume, _volume);
+    } catch (_) {}
   }
 
   /// Connect to audio_service for the Android media notification.
@@ -102,13 +157,16 @@ class AudioPlayerService {
   /// notification that shows current track info and playback controls.
   Future<void> connectAudioService() async {
     if (_audioHandler != null) return;
+    await init();
+    if (_audioHandler != null) return;
     _audioHandler = MusicAudioHandler(this);
     await AudioService.init(
       builder: () => _audioHandler!,
-      config: const AudioServiceConfig(
+      config: AudioServiceConfig(
         androidNotificationChannelId: 'com.omniversify.music',
         androidNotificationChannelName: 'Omniversify Music',
-        androidStopForegroundOnPause: true,
+        // Keep the notification (with controls) visible while paused.
+        androidStopForegroundOnPause: false,
         androidNotificationOngoing: true,
         artDownscaleWidth: 300,
         artDownscaleHeight: 300,
@@ -314,6 +372,7 @@ class AudioPlayerService {
     try {
       await _player.setVolume(_volume);
     } catch (_) {}
+    _savePrefs();
     _emit();
   }
 
@@ -325,6 +384,7 @@ class AudioPlayerService {
     if (_shuffleOn) {
       _buildShuffleQueue();
     }
+    _savePrefs();
     _emit();
   }
 
@@ -341,6 +401,7 @@ class AudioPlayerService {
         _repeatMode = MusicRepeatMode.off;
         break;
     }
+    _savePrefs();
     _emit();
   }
 
@@ -359,16 +420,61 @@ class AudioPlayerService {
   // ── Audio service / media notification helpers ──────────
 
   /// Push current song metadata to the media session notification.
+  /// Artwork is attached asynchronously once [ArtworkLoader] resolves it.
   void _updateMediaItem() {
     final song = currentSong;
     if (song == null || _audioHandler == null) return;
-    _audioHandler!.mediaItem.add(MediaItem(
+    _audioHandler!.mediaItem.add(_buildMediaItem(song, artPath: _lastArtSongPath == song.path ? _lastArtPath : null));
+    if (_lastArtSongPath != song.path) {
+      _attachArtwork(song);
+    }
+  }
+
+  Future<void> _attachArtwork(SongItem song) async {
+    final handler = _audioHandler;
+    if (handler == null) return;
+    try {
+      final bytes = await ArtworkLoader.instance.load(song);
+      if (bytes == null || bytes.isEmpty) return;
+      // Song changed while we were loading — drop stale art.
+      if (currentSong?.path != song.path) return;
+      final file = await ArtworkLoader.instance.writeForNotification(song, bytes);
+      if (file == null) return;
+      if (currentSong?.path != song.path) return;
+      _lastArtPath = file.path;
+      _lastArtSongPath = song.path;
+      handler.mediaItem.add(_buildMediaItem(song, artPath: file.path));
+      _updateWidget(artworkPath: file.path);
+    } catch (_) {}
+  }
+
+  MediaItem _buildMediaItem(SongItem song, {String? artPath}) {
+    return MediaItem(
       id: song.path,
       title: song.title,
       artist: song.artist ?? 'Unknown',
       album: song.album ?? '',
       duration: _duration,
-    ));
+      artUri: artPath != null ? Uri.file(artPath) : null,
+    );
+  }
+
+  void _updateWidget({String? artworkPath}) {
+    final song = currentSong;
+    if (song == null) {
+      MusicWidgetService.instance.clear();
+      return;
+    }
+    MusicWidgetService.instance.save(
+      title: song.title,
+      artist: song.artist ?? 'Unknown',
+      isPlaying: _isPlaying,
+      artworkUri: artworkPath != null
+          ? Uri.file(artworkPath).toString()
+          : (_lastArtSongPath == song.path && _lastArtPath != null
+              ? Uri.file(_lastArtPath!).toString()
+              : null),
+    );
   }
 
   void dispose() {
@@ -402,36 +508,31 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
     });
 
     // Expose current playlist as the system queue.
-    _service._playlist.asMap().entries.forEach((entry) {
-      final song = entry.value;
-      queue.add([
-        MediaItem(
-          id: song.path,
-          title: song.title,
-          artist: song.artist ?? 'Unknown',
-          album: song.album ?? '',
-          duration: song.duration != null
-              ? Duration(milliseconds: song.duration!)
-              : null,
-        ),
-      ]);
-    });
+    final items = _service._playlist
+        .map(
+          (song) => MediaItem(
+            id: song.path,
+            title: song.title,
+            artist: song.artist ?? 'Unknown',
+            album: song.album ?? '',
+            duration: song.duration != null
+                ? Duration(milliseconds: song.duration!)
+                : null,
+          ),
+        )
+        .toList();
+    if (items.isNotEmpty) queue.add(items);
 
     // Set initial media item if something is already playing.
     final song = _service.currentSong;
     if (song != null) {
-      mediaItem.add(MediaItem(
-        id: song.path,
-        title: song.title,
-        artist: song.artist ?? 'Unknown',
-        album: song.album ?? '',
-        duration: _service.duration,
-      ));
+      mediaItem.add(_service._buildMediaItem(song));
     }
   }
 
   /// Push current playback state to the system media session.
   void _broadcastState() {
+    final song = _service.currentSong;
     playbackState.add(PlaybackState(
       controls: [
         MediaControl.skipToPrevious,
@@ -454,14 +555,12 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
     ));
 
     // Update media item on every state change so notification stays current.
-    final song = _service.currentSong;
     if (song != null) {
-      mediaItem.add(MediaItem(
-        id: song.path,
-        title: song.title,
-        artist: song.artist ?? 'Unknown',
-        album: song.album ?? '',
-        duration: _service.duration,
+      mediaItem.add(_service._buildMediaItem(
+        song,
+        artPath: _service._lastArtSongPath == song.path
+            ? _service._lastArtPath
+            : null,
       ));
     }
   }

@@ -8,6 +8,9 @@ class SongItem {
   final String path;
   final String folder;
   final List<int>? artworkBytes; // embedded album art (JPEG/PNG)
+  /// Omniversify backend music id, when this song exists in the DB.
+  /// Used as the primary artwork source when present.
+  final int? dbId;
 
   const SongItem({
     required this.id,
@@ -18,7 +21,32 @@ class SongItem {
     required this.path,
     this.folder = '',
     this.artworkBytes,
+    this.dbId,
   });
 
   String get fileName => path.split('/').last;
+
+  SongItem copyWith({
+    int? id,
+    String? title,
+    String? artist,
+    String? album,
+    int? duration,
+    String? path,
+    String? folder,
+    List<int>? artworkBytes,
+    int? dbId,
+  }) {
+    return SongItem(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      duration: duration ?? this.duration,
+      path: path ?? this.path,
+      folder: folder ?? this.folder,
+      artworkBytes: artworkBytes ?? this.artworkBytes,
+      dbId: dbId ?? this.dbId,
+    );
+  }
 }

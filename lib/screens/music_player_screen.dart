@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -7,6 +6,7 @@ import '../models/song_item.dart';
 import '../services/audio_scanner.dart';
 import '../services/audio_metadata_extractor.dart';
 import '../services/audio_player_service.dart';
+import '../services/artwork_loader.dart';
 import '../services/music_library_service.dart';
 
 class MusicPlayerScreen extends StatefulWidget {
@@ -36,8 +36,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _service.init();
-    _service.connectAudioService();
+    _service.init().then((_) => _service.connectAudioService());
     _requestPermission();
 
     _service.stateStream.listen((_) {
@@ -48,6 +47,14 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   Future<void> _requestPermission() async {
     if (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS) {
+      // Media notification controls need POST_NOTIFICATIONS on Android 13+.
+      try {
+        final notif = await Permission.notification.status;
+        if (!notif.isGranted && !notif.isPermanentlyDenied) {
+          await Permission.notification.request();
+        }
+      } catch (_) {}
+
       var status = await Permission.audio.status;
       if (!status.isGranted) status = await Permission.audio.request();
       if (!status.isGranted) {
@@ -362,7 +369,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   Widget _songTile(SongItem song, int index, ColorScheme cs) {
     final isPlaying = _service.currentIndex == index;
     return ListTile(
-      leading: _artworkThumb(song.artworkBytes, cs, isPlaying),
+      leading: ArtworkThumb(song: song, size: 44, isPlaying: isPlaying),
       title: Text(
         song.title,
         maxLines: 1,
@@ -385,38 +392,6 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
         style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(100)),
       ),
       onTap: () => _play(index),
-    );
-  }
-
-  Widget _artworkThumb(List<int>? bytes, ColorScheme cs, bool isPlaying) {
-    if (bytes != null && bytes.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.memory(
-          Uint8List.fromList(bytes),
-          width: 44,
-          height: 44,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _defaultArt(cs, isPlaying),
-        ),
-      );
-    }
-    return _defaultArt(cs, isPlaying);
-  }
-
-  Widget _defaultArt(ColorScheme cs, bool isPlaying) {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: isPlaying ? cs.primary.withAlpha(30) : cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(
-        isPlaying ? Icons.equalizer : Icons.music_note,
-        color: isPlaying ? cs.primary : cs.onSurface.withAlpha(80),
-        size: 22,
-      ),
     );
   }
 
@@ -449,20 +424,14 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: Row(children: [
               // Artwork thumbnail in player bar
-              if (song.artworkBytes != null && song.artworkBytes!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.memory(
-                      Uint8List.fromList(song.artworkBytes!),
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                    ),
-                  ),
+              Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: ArtworkThumb(
+                  song: song,
+                  size: 36,
+                  radius: BorderRadius.circular(6),
                 ),
+              ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -717,5 +686,108 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     final m = d.inMinutes;
     final s = d.inSeconds % 60;
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+}
+
+/// Lazy album-art thumbnail.
+///
+/// Instant if [ArtworkLoader] already has the bytes in memory;
+/// otherwise loads disk → DB → file extract without blocking the list.
+class ArtworkThumb extends StatefulWidget {
+  const ArtworkThumb({
+    super.key,
+    required this.song,
+    this.size = 44,
+    this.radius,
+    this.isPlaying = false,
+  });
+
+  final SongItem song;
+  final double size;
+  final BorderRadius? radius;
+  final bool isPlaying;
+
+  @override
+  State<ArtworkThumb> createState() => _ArtworkThumbState();
+}
+
+class _ArtworkThumbState extends State<ArtworkThumb> {
+  List<int>? _bytes;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = ArtworkLoader.instance.peek(widget.song) ?? widget.song.artworkBytes;
+    if (_bytes == null || _bytes!.isEmpty) {
+      _bytes = null;
+      _load();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ArtworkThumb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.song.path != widget.song.path ||
+        oldWidget.song.dbId != widget.song.dbId) {
+      _bytes = ArtworkLoader.instance.peek(widget.song) ?? widget.song.artworkBytes;
+      if (_bytes == null || _bytes!.isEmpty) {
+        _bytes = null;
+        _load();
+      } else {
+        setState(() {});
+      }
+    }
+  }
+
+  Future<void> _load() async {
+    if (_loading) return;
+    _loading = true;
+    try {
+      final bytes = await ArtworkLoader.instance.load(widget.song);
+      if (!mounted) return;
+      setState(() => _bytes = bytes);
+    } catch (_) {
+      if (!mounted) setState(() => _bytes = null);
+    } finally {
+      _loading = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bytes = _bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: widget.radius ?? BorderRadius.circular(8),
+        child: Image.memory(
+          Uint8List.fromList(bytes),
+          width: widget.size,
+          height: widget.size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _a, _b) => _fallback(cs),
+        ),
+      );
+    }
+    return _fallback(cs);
+  }
+
+  Widget _fallback(ColorScheme cs) {
+    return Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(
+        color: widget.isPlaying
+            ? cs.primary.withAlpha(30)
+            : cs.surfaceContainerHighest,
+        borderRadius: widget.radius ?? BorderRadius.circular(8),
+      ),
+      child: Icon(
+        widget.isPlaying ? Icons.equalizer : Icons.music_note,
+        color: widget.isPlaying ? cs.primary : cs.onSurface.withAlpha(80),
+        size: widget.size * 0.5,
+      ),
+    );
   }
 }
