@@ -166,8 +166,10 @@ class AudioPlayerService {
         androidNotificationChannelId: 'com.omniversify.music',
         androidNotificationChannelName: 'Omniversify Music',
         // Keep the notification (with controls) visible while paused.
+        // audio_service asserts: ongoing can only be true when
+        // androidStopForegroundOnPause is also true — so ongoing must be false.
         androidStopForegroundOnPause: false,
-        androidNotificationOngoing: true,
+        androidNotificationOngoing: false,
         artDownscaleWidth: 300,
         artDownscaleHeight: 300,
       ),
