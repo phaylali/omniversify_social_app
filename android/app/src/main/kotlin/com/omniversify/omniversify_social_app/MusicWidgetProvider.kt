@@ -7,7 +7,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent
 import android.widget.RemoteViews
+import com.ryanheise.audioservice.MediaButtonReceiver
 import es.antonborri.home_widget.HomeWidgetPlugin
 
 class MusicWidgetProvider : AppWidgetProvider() {
@@ -51,33 +53,46 @@ class MusicWidgetProvider : AppWidgetProvider() {
             }
         }
 
+        // Background of the widget opens the app; buttons only send media keys.
         views.setOnClickPendingIntent(
             R.id.widget_root,
-            launchIntent(context, null)
+            launchIntent(context)
         )
         views.setOnClickPendingIntent(
             R.id.widget_play_pause,
-            launchIntent(context, "play_pause")
+            mediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 1)
         )
         views.setOnClickPendingIntent(
             R.id.widget_next,
-            launchIntent(context, "next")
+            mediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_NEXT, 2)
         )
         views.setOnClickPendingIntent(
             R.id.widget_previous,
-            launchIntent(context, "previous")
+            mediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_PREVIOUS, 3)
         )
 
         appWidgetManager.updateAppWidget(appWidgetId, views)
     }
 
-    private fun launchIntent(context: Context, action: String?): PendingIntent {
+    private fun launchIntent(context: Context): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            if (action != null) putExtra("widget_action", action)
         }
-        val requestCode = action?.hashCode() ?: 0
         return PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /// Control playback via MediaButtonReceiver — does not open MainActivity.
+    private fun mediaButtonIntent(context: Context, keyCode: Int, requestCode: Int): PendingIntent {
+        val intent = Intent(context, MediaButtonReceiver::class.java).apply {
+            action = Intent.ACTION_MEDIA_BUTTON
+            putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        }
+        return PendingIntent.getBroadcast(
             context,
             requestCode,
             intent,

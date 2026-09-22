@@ -713,16 +713,23 @@ class ArtworkThumb extends StatefulWidget {
 
 class _ArtworkThumbState extends State<ArtworkThumb> {
   List<int>? _bytes;
+  Uint8List? _image;
   bool _loading = false;
 
   @override
   void initState() {
     super.initState();
-    _bytes = ArtworkLoader.instance.peek(widget.song) ?? widget.song.artworkBytes;
-    if (_bytes == null || _bytes!.isEmpty) {
-      _bytes = null;
+    _setBytes(ArtworkLoader.instance.peek(widget.song) ?? widget.song.artworkBytes);
+    if (_bytes == null) {
       _load();
     }
+  }
+
+  void _setBytes(List<int>? bytes) {
+    if (bytes != null && bytes.isEmpty) bytes = null;
+    _bytes = bytes;
+    // Keep one Uint8List instance so Image.memory does not re-decode every rebuild.
+    _image = bytes != null ? Uint8List.fromList(bytes) : null;
   }
 
   @override
@@ -730,9 +737,8 @@ class _ArtworkThumbState extends State<ArtworkThumb> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.song.path != widget.song.path ||
         oldWidget.song.dbId != widget.song.dbId) {
-      _bytes = ArtworkLoader.instance.peek(widget.song) ?? widget.song.artworkBytes;
-      if (_bytes == null || _bytes!.isEmpty) {
-        _bytes = null;
+      _setBytes(ArtworkLoader.instance.peek(widget.song) ?? widget.song.artworkBytes);
+      if (_bytes == null) {
         _load();
       } else {
         setState(() {});
@@ -746,9 +752,9 @@ class _ArtworkThumbState extends State<ArtworkThumb> {
     try {
       final bytes = await ArtworkLoader.instance.load(widget.song);
       if (!mounted) return;
-      setState(() => _bytes = bytes);
+      setState(() => _setBytes(bytes));
     } catch (_) {
-      if (!mounted) setState(() => _bytes = null);
+      if (!mounted) setState(() => _setBytes(null));
     } finally {
       _loading = false;
     }
@@ -757,15 +763,17 @@ class _ArtworkThumbState extends State<ArtworkThumb> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final bytes = _bytes;
-    if (bytes != null && bytes.isNotEmpty) {
+    final image = _image;
+    if (image != null) {
       return ClipRRect(
         borderRadius: widget.radius ?? BorderRadius.circular(8),
         child: Image.memory(
-          Uint8List.fromList(bytes),
+          image,
           width: widget.size,
           height: widget.size,
           fit: BoxFit.cover,
+          gaplessPlayback: true,
+          cacheWidth: (widget.size * MediaQuery.devicePixelRatioOf(context)).round(),
           errorBuilder: (_, _a, _b) => _fallback(cs),
         ),
       );

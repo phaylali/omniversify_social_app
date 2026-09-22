@@ -297,12 +297,15 @@ class AudioPlayerService {
     _emit();
   }
 
+  /// Stop playback but keep the current track selected so Play can resume.
+  /// Used by the notification Stop action — must not clear the playlist.
   void stop() {
-    _player.stop();
-    _currentIndex = null;
+    _player.pause();
     _isPlaying = false;
     _position = Duration.zero;
-    _duration = Duration.zero;
+    try {
+      _player.seek(Duration.zero);
+    } catch (_) {}
     _emit();
   }
 
@@ -421,12 +424,20 @@ class AudioPlayerService {
 
   // ── Audio service / media notification helpers ──────────
 
+  // Only push mediaItem when the track or artwork actually changes.
+  // Re-adding on every position tick makes the notification art flash.
+  String? _lastMediaItemKey;
+
   /// Push current song metadata to the media session notification.
   /// Artwork is attached asynchronously once [ArtworkLoader] resolves it.
   void _updateMediaItem() {
     final song = currentSong;
     if (song == null || _audioHandler == null) return;
-    _audioHandler!.mediaItem.add(_buildMediaItem(song, artPath: _lastArtSongPath == song.path ? _lastArtPath : null));
+    final artPath = _lastArtSongPath == song.path ? _lastArtPath : null;
+    final key = '${song.path}|$artPath|${_duration.inMilliseconds}';
+    if (key == _lastMediaItemKey) return;
+    _lastMediaItemKey = key;
+    _audioHandler!.mediaItem.add(_buildMediaItem(song, artPath: artPath));
     if (_lastArtSongPath != song.path) {
       _attachArtwork(song);
     }
@@ -445,6 +456,7 @@ class AudioPlayerService {
       if (currentSong?.path != song.path) return;
       _lastArtPath = file.path;
       _lastArtSongPath = song.path;
+      _lastMediaItemKey = null; // force mediaItem refresh with new art
       handler.mediaItem.add(_buildMediaItem(song, artPath: file.path));
       _updateWidget(artworkPath: file.path);
     } catch (_) {}
@@ -461,21 +473,33 @@ class AudioPlayerService {
     );
   }
 
+  // Skip RemoteViews refresh when nothing visible changed — otherwise
+  // the widget art reloads (and flashes) on every position tick.
+  String? _lastWidgetKey;
+
   void _updateWidget({String? artworkPath}) {
     final song = currentSong;
     if (song == null) {
-      MusicWidgetService.instance.clear();
+      if (_lastWidgetKey != 'idle') {
+        _lastWidgetKey = 'idle';
+        MusicWidgetService.instance.clear();
+      }
       return;
     }
+    final artUri = artworkPath != null
+        ? Uri.file(artworkPath).toString()
+        : (_lastArtSongPath == song.path && _lastArtPath != null
+            ? Uri.file(_lastArtPath!).toString()
+            : null);
+    final key =
+        '${song.path}|${song.artist}|$_isPlaying|$artUri';
+    if (key == _lastWidgetKey) return;
+    _lastWidgetKey = key;
     MusicWidgetService.instance.save(
       title: song.title,
       artist: song.artist ?? 'Unknown',
       isPlaying: _isPlaying,
-      artworkUri: artworkPath != null
-          ? Uri.file(artworkPath).toString()
-          : (_lastArtSongPath == song.path && _lastArtPath != null
-              ? Uri.file(_lastArtPath!).toString()
-              : null),
+      artworkUri: artUri,
     );
   }
 
@@ -534,7 +558,6 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Push current playback state to the system media session.
   void _broadcastState() {
-    final song = _service.currentSong;
     playbackState.add(PlaybackState(
       controls: [
         MediaControl.skipToPrevious,
@@ -555,28 +578,25 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
       bufferedPosition: _service.position,
       speed: 1.0,
     ));
-
-    // Update media item on every state change so notification stays current.
-    if (song != null) {
-      mediaItem.add(_service._buildMediaItem(
-        song,
-        artPath: _service._lastArtSongPath == song.path
-            ? _service._lastArtPath
-            : null,
-      ));
-    }
+    // mediaItem is updated only in AudioPlayerService._updateMediaItem
+    // when the track/artwork actually changes (avoids notification art flash).
   }
 
   @override
-  Future<void> play() async => _service.togglePlay();
+  Future<void> play() async {
+    if (_service.currentSong == null) return;
+    if (!_service.isPlaying) _service.togglePlay();
+  }
 
   @override
-  Future<void> pause() async => _service.togglePlay();
+  Future<void> pause() async {
+    if (_service.isPlaying) _service.togglePlay();
+  }
 
   @override
   Future<void> stop() async {
+    // Keep the track selected so Play from the notification can resume it.
     _service.stop();
-    await super.stop();
   }
 
   @override
