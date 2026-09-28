@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../core/config/api_config.dart';
 import '../models/song_item.dart';
-import 'audio_metadata_extractor.dart';
+import 'audio_metadata_extractor_stub.dart'
+    if (dart.library.io) 'audio_metadata_extractor.dart';
 
 /// Lazy, cache-first artwork loader.
 ///
@@ -137,12 +139,31 @@ class ArtworkLoader {
   }
 
   /// Persist artwork for the media notification / share and return the file.
-  Future<File?> writeForNotification(SongItem song, List<int> bytes) async {
+  /// Falls back to the app logo when the song has no artwork.
+  Future<File?> writeForNotification(SongItem song, List<int>? bytes) async {
     try {
       final dir = await _ensureDir();
       final file = File('${dir.path}/now_playing.jpg');
-      await file.writeAsBytes(bytes, flush: true);
+      final data = (bytes != null && bytes.isNotEmpty)
+          ? bytes
+          : await loadLogoBytes();
+      if (data == null) return null;
+      await file.writeAsBytes(data, flush: true);
       return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<int>? _logoBytes;
+
+  /// Bundled app logo used as the placeholder when artwork is missing.
+  Future<List<int>?> loadLogoBytes() async {
+    if (_logoBytes != null) return _logoBytes;
+    try {
+      final data = await rootBundle.load('assets/logo/logo.webp');
+      _logoBytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      return _logoBytes;
     } catch (_) {
       return null;
     }

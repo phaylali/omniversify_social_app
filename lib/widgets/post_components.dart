@@ -3,8 +3,22 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/post.dart';
 import '../data/post_state.dart';
+import '../data/dummy_data.dart';
 import '../core/config/api_config.dart';
 import 'post_interaction_panel.dart';
+import 'share_sheet.dart';
+
+/// Compact relative time for comment rows: `now`, `2m`, `2h`, `5d`, `3w`, `4mo`, `4y`.
+String compactAgo(DateTime dt) {
+  final diff = DateTime.now().difference(dt);
+  if (diff.inMinutes < 1) return 'now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+  if (diff.inHours < 24) return '${diff.inHours}h';
+  if (diff.inDays < 7) return '${diff.inDays}d';
+  if (diff.inDays < 30) return '${diff.inDays ~/ 7}w';
+  if (diff.inDays < 365) return '${diff.inDays ~/ 30}mo';
+  return '${diff.inDays ~/ 365}y';
+}
 
 class PostHeader extends StatelessWidget {
   final String name;
@@ -61,7 +75,7 @@ class PostHeader extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Text(name, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 14)),
+                  Text(name, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 15.5)),
                   if (verified) ...[
                     const SizedBox(width: 3),
                     Icon(Icons.verified, size: 14, color: gold),
@@ -167,7 +181,16 @@ class PostFooter extends ConsumerWidget {
 
         // ── Share icon ──
         GestureDetector(
-          onTap: () => ref.read(postStateProvider.notifier).share(postId),
+          onTap: () {
+            final post = dummyPosts.where((p) => p.id == postId).firstOrNull;
+            ShareSheet.show(
+              context,
+              shareText: post != null
+                  ? postShareText(post.user.name, post.user.handle, post.text)
+                  : 'Check out this post',
+              onShared: () => ref.read(postStateProvider.notifier).share(postId),
+            );
+          },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: Icon(Icons.share_outlined, size: 18, color: Theme.of(context).textTheme.bodySmall?.color),

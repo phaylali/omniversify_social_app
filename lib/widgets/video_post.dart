@@ -23,7 +23,7 @@ class VideoPostWidget extends StatelessWidget {
           if (post.text.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Text(post.text, style: const TextStyle(fontSize: 14)),
+              child: Text(post.text, style: const TextStyle(fontSize: 15.5)),
             ),
           if (post.videoUrl != null)
             AspectRatio(

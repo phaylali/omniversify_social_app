@@ -112,6 +112,7 @@ class _ScrollVideoPlayerState extends State<ScrollVideoPlayer> {
   bool _isBuffering = true;
   bool _hasError = false;
   bool _isPlaying = false;
+  String _error = '';
 
   @override
   void initState() {
@@ -128,7 +129,20 @@ class _ScrollVideoPlayerState extends State<ScrollVideoPlayer> {
     });
 
     _player.stream.error.listen((error) {
-      if (mounted) setState(() => _hasError = true);
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _error = error;
+        });
+      }
+    });
+
+    // Rebuild when dimensions resolve so cover-fit has real sizes.
+    _player.stream.width.listen((_) {
+      if (mounted) setState(() {});
+    });
+    _player.stream.height.listen((_) {
+      if (mounted) setState(() {});
     });
 
     _openVideo();
@@ -141,14 +155,29 @@ class _ScrollVideoPlayerState extends State<ScrollVideoPlayer> {
       // which never fires for the initial page.
       await _player.setPlaylistMode(PlaylistMode.loop);
       await _player.open(Media(widget.url), play: widget.isActive);
-    } catch (_) {
-      if (mounted) setState(() => _hasError = true);
+      if (widget.isActive) {
+        await _player.play();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _error = e.toString();
+        });
+      }
     }
   }
 
   @override
   void didUpdateWidget(ScrollVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.url != oldWidget.url) {
+      _hasError = false;
+      _error = '';
+      _isBuffering = true;
+      _openVideo();
+      return;
+    }
     if (widget.isActive && !oldWidget.isActive) {
       _player.play();
     } else if (!widget.isActive && oldWidget.isActive) {
@@ -175,19 +204,47 @@ class _ScrollVideoPlayerState extends State<ScrollVideoPlayer> {
   Widget build(BuildContext context) {
     if (_hasError) {
       return Center(
-        child: IconButton(
-          icon: Icon(Icons.error_outline,
-              color: Colors.white.withAlpha(120), size: 48),
-          onPressed: () {
-            setState(() {
-              _hasError = false;
-              _isBuffering = true;
-            });
-            _openVideo();
-          },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(Icons.error_outline,
+                  color: Colors.white.withAlpha(120), size: 48),
+              onPressed: () {
+                setState(() {
+                  _hasError = false;
+                  _error = '';
+                  _isBuffering = true;
+                });
+                _openVideo();
+              },
+            ),
+            if (_error.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  _error,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withAlpha(120),
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+          ],
         ),
       );
     }
+
+    final screen = MediaQuery.of(context).size;
+    final width = (_player.state.width ?? 0) > 0
+        ? _player.state.width!.toDouble()
+        : screen.width;
+    final height = (_player.state.height ?? 0) > 0
+        ? _player.state.height!.toDouble()
+        : screen.height;
 
     return GestureDetector(
       onTap: _togglePlay,
@@ -196,12 +253,15 @@ class _ScrollVideoPlayerState extends State<ScrollVideoPlayer> {
           fit: BoxFit.cover,
           clipBehavior: Clip.hardEdge,
           child: SizedBox(
-            width: _player.state.width?.toDouble() ?? MediaQuery.of(context).size.width,
-            height: _player.state.height?.toDouble() ?? MediaQuery.of(context).size.height,
+            width: width,
+            height: height,
             child: Stack(
               alignment: Alignment.center,
               children: [
-                Video(controller: _controller),
+                Video(
+                  controller: _controller,
+                  fit: BoxFit.cover,
+                ),
                 if (_isBuffering)
                   const CircularProgressIndicator(
                     color: Colors.white,

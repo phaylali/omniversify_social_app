@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/post.dart';
 import 'post_components.dart';
 import 'image_preview.dart';
+import 'app_logo.dart';
 
 class BookPostWidget extends StatefulWidget {
   final Post post;
@@ -33,7 +34,7 @@ class _BookPostWidgetState extends State<BookPostWidget> {
             onAvatarTap: PostHeader.avatarTapHandler(context, widget.post.user),
           ),
           const SizedBox(height: 8),
-          Text(widget.post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.4)),
+          Text(widget.post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.4)),
           const SizedBox(height: 8),
 
           GestureDetector(
@@ -55,7 +56,7 @@ class _BookPostWidgetState extends State<BookPostWidget> {
                         width: 75,
                         height: 120,
                         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: const Icon(Icons.book, size: 28),
+                        child: const AppLogo(size: 40, fit: BoxFit.contain),
                       ),
                     ),
                   ),

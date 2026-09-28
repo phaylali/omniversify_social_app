@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../models/post.dart';
@@ -9,12 +11,49 @@ class Comment {
   final String text;
   final DateTime timestamp;
 
+  /// Local file path of an attached image (jpeg/jpg/png/webp/gif), if any.
+  final String? imagePath;
+
+  /// Raw image bytes — used on web where there is no file path.
+  final Uint8List? imageBytes;
+
+  final bool likedByMe;
+  final int likeCount;
+
+  /// Id of the comment this one replies to, for one level of nesting.
+  final String? replyTo;
+
   const Comment({
     required this.id,
     required this.user,
     required this.text,
     required this.timestamp,
+    this.imagePath,
+    this.imageBytes,
+    this.likedByMe = false,
+    this.likeCount = 0,
+    this.replyTo,
   });
+
+  Comment copyWith({
+    String? imagePath,
+    Uint8List? imageBytes,
+    bool? likedByMe,
+    int? likeCount,
+    String? replyTo,
+  }) {
+    return Comment(
+      id: id,
+      user: user,
+      text: text,
+      timestamp: timestamp,
+      imagePath: imagePath ?? this.imagePath,
+      imageBytes: imageBytes ?? this.imageBytes,
+      likedByMe: likedByMe ?? this.likedByMe,
+      likeCount: likeCount ?? this.likeCount,
+      replyTo: replyTo ?? this.replyTo,
+    );
+  }
 }
 
 class PostState {
@@ -78,6 +117,21 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
         ),
       };
     }
+    // Scrolls share the same state map so they comment/like like posts do.
+    for (final scroll in dummyScrolls) {
+      state = {
+        ...state,
+        scroll.id: PostState(
+          likes: scroll.likes,
+          liked: false,
+          comments: scroll.comments,
+          shares: 0,
+          likers: _generateLikers(scroll.likes),
+          commentList: _generateComments(scroll.id, scroll.comments),
+          sharers: const [],
+        ),
+      };
+    }
   }
 
   List<PostUser> _generateLikers(int count) {
@@ -123,6 +177,7 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
         user: users[i % users.length],
         text: texts[i],
         timestamp: DateTime.now().subtract(Duration(hours: i + 1)),
+        likeCount: (i * 7) % 23,
       ),
     );
   }
@@ -143,20 +198,49 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
     };
   }
 
-  void addComment(String postId, String text, PostUser user) {
+  void addComment(
+    String postId,
+    String text,
+    PostUser user, {
+    String? imagePath,
+    Uint8List? imageBytes,
+    String? replyTo,
+  }) {
     final current = state[postId];
     if (current == null) return;
     final comment = Comment(
-      id: '$postId-${current.comments}',
+      id: '$postId-c${current.comments}',
       user: user,
       text: text,
       timestamp: DateTime.now(),
+      imagePath: imagePath,
+      imageBytes: imageBytes,
+      replyTo: replyTo,
     );
     state = {
       ...state,
       postId: current.copyWith(
         comments: current.comments + 1,
         commentList: [comment, ...current.commentList],
+      ),
+    };
+  }
+
+  void toggleCommentLike(String postId, String commentId) {
+    final current = state[postId];
+    if (current == null) return;
+    state = {
+      ...state,
+      postId: current.copyWith(
+        commentList: [
+          for (final c in current.commentList)
+            c.id == commentId
+                ? c.copyWith(
+                    likedByMe: !c.likedByMe,
+                    likeCount: c.likedByMe ? c.likeCount - 1 : c.likeCount + 1,
+                  )
+                : c,
+        ],
       ),
     };
   }

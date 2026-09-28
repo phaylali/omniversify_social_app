@@ -87,3 +87,31 @@ class WorkoutTrackerScreen extends StatelessWidget {
     );
   }
 }
+
+class MusicTrackerScreen extends StatelessWidget {
+  const MusicTrackerScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const TrackerScreen(
+      title: 'Music',
+      icon: Icons.music_note_outlined,
+      accentColor: Color(0xFFB15CFF),
+      apiCategory: 'music',
+    );
+  }
+}
+
+class PodcastsTrackerScreen extends StatelessWidget {
+  const PodcastsTrackerScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const TrackerScreen(
+      title: 'Podcasts',
+      icon: Icons.podcasts_outlined,
+      accentColor: Color(0xFFE85D75),
+      apiCategory: 'podcasts',
+    );
+  }
+}

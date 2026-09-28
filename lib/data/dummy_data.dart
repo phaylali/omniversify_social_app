@@ -226,3 +226,92 @@ final dummyPosts = [
     shares: 11,
   ),
 ];
+
+/// People shown in the share sheet's "Send to" list (same crowd as the DM drawer).
+const shareRecipients = [
+  PostUser(name: 'Ahmed', handle: '@ahmed_m'),
+  PostUser(name: 'Sara', handle: '@sara_dev', verified: true),
+  PostUser(name: 'Omar', handle: '@omar_92'),
+  PostUser(name: 'Fatima', handle: '@fatima_art', verified: true),
+  PostUser(name: 'Karim', handle: '@karim_w'),
+  PostUser(name: 'Amina', handle: '@amina_stream', verified: true),
+];
+
+class ScrollItem {
+  final String id;
+  final String username;
+  final String caption;
+  final int likes;
+  final int comments;
+  final String? videoUrl;
+  final String? imageUrl;
+
+  const ScrollItem({
+    required this.id,
+    required this.username,
+    required this.caption,
+    this.likes = 0,
+    this.comments = 0,
+    this.videoUrl,
+    this.imageUrl,
+  });
+}
+
+final dummyScrolls = [
+  const ScrollItem(
+    id: 'scroll_0',
+    username: '@youssef_ma',
+    caption: 'Sunset timelapse from the rooftop #goldenhour # Morocco',
+    likes: 2400,
+    comments: 186,
+    imageUrl: 'https://picsum.photos/seed/scroll0/1080/1920',
+  ),
+  const ScrollItem(
+    id: 'scroll_1',
+    username: '@amina_stream',
+    caption: 'Elden Ring DLC boss fight was insane #gaming #eldenring',
+    likes: 5200,
+    comments: 412,
+    videoUrl: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+  ),
+  const ScrollItem(
+    id: 'scroll_2',
+    username: '@omar_gamer',
+    caption: 'Cooking tagine with grandma #moroccanfood #homemade',
+    likes: 1800,
+    comments: 94,
+    imageUrl: 'https://picsum.photos/seed/scroll2/1080/1920',
+  ),
+  const ScrollItem(
+    id: 'scroll_3',
+    username: '@fatima_otaku',
+    caption: 'Attack on Titan OST on the piano #anime #music',
+    likes: 8900,
+    comments: 623,
+    videoUrl: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4',
+  ),
+  const ScrollItem(
+    id: 'scroll_4',
+    username: '@karim_photo',
+    caption: 'Streets of Chefchaouen #travel #bluecity',
+    likes: 3100,
+    comments: 215,
+    imageUrl: 'https://picsum.photos/seed/scroll4/1080/1920',
+  ),
+  const ScrollItem(
+    id: 'scroll_5',
+    username: '@sara_fitness',
+    caption: 'Morning workout routine #fitness #gym',
+    likes: 4500,
+    comments: 328,
+    videoUrl: 'https://filesamples.com/samples/video/mp4/sample_640x360.mp4',
+  ),
+  const ScrollItem(
+    id: 'scroll_6',
+    username: '@youssef_ma',
+    caption: 'The Hassan II Mosque at night #casablanca #architecture',
+    likes: 7200,
+    comments: 489,
+    imageUrl: 'https://picsum.photos/seed/scroll6/1080/1920',
+  ),
+];

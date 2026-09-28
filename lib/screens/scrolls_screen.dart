@@ -1,84 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/config/api_config.dart';
+import '../data/dummy_data.dart';
+import '../data/post_state.dart';
 import '../widgets/video_player.dart';
+import '../widgets/app_logo.dart';
+import '../widgets/share_sheet.dart';
+import '../widgets/post_interaction_panel.dart';
 
-class ScrollItem {
-  final String username;
-  final String caption;
-  final int likes;
-  final int comments;
-  final String? videoUrl;
-  final String? imageUrl;
-
-  const ScrollItem({
-    required this.username,
-    required this.caption,
-    this.likes = 0,
-    this.comments = 0,
-    this.videoUrl,
-    this.imageUrl,
-  });
-}
-
-final List<ScrollItem> _scrollItems = [
-  const ScrollItem(
-    username: '@youssef_ma',
-    caption: 'Sunset timelapse from the rooftop #goldenhour # Morocco',
-    likes: 2400,
-    comments: 186,
-    imageUrl: 'https://picsum.photos/seed/scroll0/1080/1920',
-  ),
-  const ScrollItem(
-    username: '@amina_stream',
-    caption: 'Elden Ring DLC boss fight was insane #gaming #eldenring',
-    likes: 5200,
-    comments: 412,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-  ),
-  const ScrollItem(
-    username: '@omar_gamer',
-    caption: 'Cooking tagine with grandma #moroccanfood #homemade',
-    likes: 1800,
-    comments: 94,
-    imageUrl: 'https://picsum.photos/seed/scroll2/1080/1920',
-  ),
-  const ScrollItem(
-    username: '@fatima_otaku',
-    caption: 'Attack on Titan OST on the piano #anime #music',
-    likes: 8900,
-    comments: 623,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-  ),
-  const ScrollItem(
-    username: '@karim_photo',
-    caption: 'Streets of Chefchaouen #travel #bluecity',
-    likes: 3100,
-    comments: 215,
-    imageUrl: 'https://picsum.photos/seed/scroll4/1080/1920',
-  ),
-  const ScrollItem(
-    username: '@sara_fitness',
-    caption: 'Morning workout routine #fitness #gym',
-    likes: 4500,
-    comments: 328,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-  ),
-  const ScrollItem(
-    username: '@youssef_ma',
-    caption: 'The Hassan II Mosque at night #casablanca #architecture',
-    likes: 7200,
-    comments: 489,
-    imageUrl: 'https://picsum.photos/seed/scroll6/1080/1920',
-  ),
-];
-
-class ScrollsScreen extends StatefulWidget {
+class ScrollsScreen extends ConsumerStatefulWidget {
   const ScrollsScreen({super.key});
 
   @override
-  State<ScrollsScreen> createState() => _ScrollsScreenState();
+  ConsumerState<ScrollsScreen> createState() => _ScrollsScreenState();
 }
 
-class _ScrollsScreenState extends State<ScrollsScreen> with SingleTickerProviderStateMixin {
+class _ScrollsScreenState extends ConsumerState<ScrollsScreen> with SingleTickerProviderStateMixin {
   late AnimationController _arrowController;
   late Animation<Offset> _arrowAnimation;
   bool _showArrow = true;
@@ -136,16 +73,18 @@ class _ScrollsScreenState extends State<ScrollsScreen> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     final gold = Theme.of(context).colorScheme.primary;
+    final postStates = ref.watch(postStateProvider);
 
     return Stack(
       children: [
         PageView.builder(
           scrollDirection: Axis.vertical,
-          itemCount: _scrollItems.length,
+          itemCount: dummyScrolls.length,
           onPageChanged: _onPageChanged,
           itemBuilder: (context, index) {
-            final item = _scrollItems[index];
+            final item = dummyScrolls[index];
             final isActive = index == _currentIndex;
+            final state = postStates[item.id];
 
             return Container(
               color: Colors.black,
@@ -170,8 +109,8 @@ class _ScrollsScreenState extends State<ScrollsScreen> with SingleTickerProvider
                           ),
                         );
                       },
-                      errorBuilder: (_, __, ___) => Center(
-                        child: Icon(Icons.movie_filter, size: 64, color: gold.withAlpha(80)),
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: AppLogo(size: 80, fit: BoxFit.contain),
                       ),
                     ),
 
@@ -198,11 +137,25 @@ class _ScrollsScreenState extends State<ScrollsScreen> with SingleTickerProvider
                       children: [
                         _actionButton(context, Icons.add_circle_outline, 'Create'),
                         const SizedBox(height: 20),
-                        _actionButton(context, Icons.favorite_border, _formatCount(item.likes)),
+                        _actionButton(
+                          context,
+                          state?.liked == true ? Icons.favorite : Icons.favorite_border,
+                          _formatCount(state?.likes ?? item.likes),
+                          color: state?.liked == true ? gold : Colors.white,
+                          onPressed: () => ref.read(postStateProvider.notifier).toggleLike(item.id),
+                        ),
                         const SizedBox(height: 20),
-                        _actionButton(context, Icons.chat_bubble_outline, _formatCount(item.comments)),
+                        _actionButton(context, Icons.chat_bubble_outline,
+                            _formatCount(state?.comments ?? item.comments),
+                            onPressed: () => PostInteractionPanel.show(context, item.id, initialTab: 1)),
                         const SizedBox(height: 20),
-                        _actionButton(context, Icons.share_outlined, 'Share'),
+                        _actionButton(context, Icons.share_outlined, 'Share',
+                            onPressed: () => ShareSheet.show(
+                                  context,
+                                  shareText:
+                                      '${item.caption}\n${ApiConfig.omniversifyAppUrl}/scroll/$index',
+                                  onShared: () => ref.read(postStateProvider.notifier).share(item.id),
+                                )),
                         const SizedBox(height: 20),
                         _actionButton(context, Icons.bookmark_border, 'Save'),
                       ],
@@ -301,13 +254,16 @@ class _ScrollsScreenState extends State<ScrollsScreen> with SingleTickerProvider
     );
   }
 
-  Widget _actionButton(BuildContext context, IconData icon, String label) {
-    return Column(
+  Widget _actionButton(BuildContext context, IconData icon, String label,
+      {VoidCallback? onPressed, Color color = Colors.white}) {
+    final child = Column(
       children: [
-        Icon(icon, color: Colors.white, size: 28),
+        Icon(icon, color: color, size: 28),
         const SizedBox(height: 2),
         Text(label, style: TextStyle(color: Colors.white.withAlpha(200), fontSize: 11)),
       ],
     );
+    if (onPressed == null) return child;
+    return GestureDetector(onTap: onPressed, child: child);
   }
 }

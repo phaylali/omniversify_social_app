@@ -1,4 +1,4 @@
-package com.omniversify.omniversify_social_app
+package com.omniversify.app
 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
@@ -6,11 +6,14 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.view.KeyEvent
 import android.widget.RemoteViews
 import com.ryanheise.audioservice.MediaButtonReceiver
 import es.antonborri.home_widget.HomeWidgetPlugin
+import java.io.File
 
 class MusicWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
@@ -42,16 +45,9 @@ class MusicWidgetProvider : AppWidgetProvider() {
             if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         )
 
-        if (!artUri.isNullOrEmpty()) {
-            try {
-                views.setImageViewUri(R.id.widget_artwork, Uri.parse(artUri))
-            } catch (_: Exception) {
-                views.setImageViewResource(
-                    R.id.widget_artwork,
-                    android.R.drawable.ic_menu_gallery
-                )
-            }
-        }
+        // file:// URIs in private storage are unreadable by the launcher —
+        // decode the bitmap here (app process) and push it via RemoteViews.
+        setArtwork(views, artUri)
 
         // Background of the widget opens the app; buttons only send media keys.
         views.setOnClickPendingIntent(
@@ -72,6 +68,54 @@ class MusicWidgetProvider : AppWidgetProvider() {
         )
 
         appWidgetManager.updateAppWidget(appWidgetId, views)
+    }
+
+    private fun setArtwork(views: RemoteViews, artUri: String?) {
+        val fallback = R.drawable.app_logo
+        if (artUri.isNullOrEmpty()) {
+            views.setImageViewResource(R.id.widget_artwork, fallback)
+            return
+        }
+        try {
+            val uri = Uri.parse(artUri)
+            val path = when {
+                uri.scheme == "file" && uri.path != null -> uri.path!!
+                artUri.startsWith("/") -> artUri
+                else -> null
+            }
+            if (path == null) {
+                views.setImageViewResource(R.id.widget_artwork, fallback)
+                return
+            }
+            val bitmap = decodeScaled(path, 512, 512)
+            if (bitmap != null) {
+                views.setImageViewBitmap(R.id.widget_artwork, bitmap)
+            } else {
+                views.setImageViewResource(R.id.widget_artwork, fallback)
+            }
+        } catch (_: Exception) {
+            views.setImageViewResource(R.id.widget_artwork, fallback)
+        }
+    }
+
+    private fun decodeScaled(path: String, maxW: Int, maxH: Int): Bitmap? {
+        val file = File(path)
+        if (!file.exists()) return null
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= maxW &&
+                bounds.outHeight / (sample * 2) >= maxH
+            ) {
+                sample *= 2
+            }
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeFile(path, opts)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun launchIntent(context: Context): PendingIntent {

@@ -79,4 +79,21 @@ class TaglibAudioService {
     final t = v.trim();
     return t.isEmpty ? null : t;
   }
+
+  /// Best-effort: bake title/artist into the file's own tags so other
+  /// players see it too. Silently does nothing when unsupported.
+  static Future<void> writeTags(String path, {String? title, String? artist}) async {
+    try {
+      if (!TagLibFile.isSupported) return;
+      final file = await TagLibFile.openAsync(path, writeAccess: true);
+      if (file == null) return;
+      try {
+        if (title != null) file.title = title;
+        if (artist != null) file.artist = artist;
+        file.save();
+      } finally {
+        file.close();
+      }
+    } catch (_) {}
+  }
 }

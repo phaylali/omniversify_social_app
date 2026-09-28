@@ -31,6 +31,12 @@ class ToolsScreen extends StatelessWidget {
       ('Books', Icons.book_outlined, const Color(0xFFB8860B), () {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BooksTrackerScreen()));
       }),
+      ('Music', Icons.music_note_outlined, const Color(0xFFB15CFF), () {
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MusicTrackerScreen()));
+      }),
+      ('Podcasts', Icons.podcasts_outlined, const Color(0xFFE85D75), () {
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PodcastsTrackerScreen()));
+      }),
       ('Workout', Icons.fitness_center_outlined, const Color(0xFFFF6347), () {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WorkoutTrackerScreen()));
       }),
@@ -52,7 +58,7 @@ class ToolsScreen extends StatelessWidget {
       ('Weather', Icons.wb_sunny_outlined, () {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WeatherScreen()));
       }),
-      ('Music', Icons.music_note_outlined, () {
+      ('Player', Icons.library_music_outlined, () {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MusicPlayerScreen()));
       }),
       ('Translate', Icons.translate_outlined, () {

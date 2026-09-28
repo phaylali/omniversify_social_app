@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/link_preview_service.dart';
+import 'app_logo.dart';
 
 class LinkPreviewWidget extends StatefulWidget {
   final String url;
@@ -107,7 +108,7 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => Container(
                     color: cs.surfaceContainerHighest,
-                    child: Icon(_platformIcon, color: cs.onSurface.withAlpha(80), size: 32),
+                    child: const Center(child: AppLogo(size: 48, fit: BoxFit.contain)),
                   ),
                 ),
               ),
@@ -158,18 +159,6 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
         ),
       ),
     );
-  }
-
-  IconData get _platformIcon {
-    switch (_data!.platform) {
-      case 'youtube': return Icons.play_circle_outline;
-      case 'tiktok': return Icons.music_note_outlined;
-      case 'twitter': return Icons.alternate_email;
-      case 'instagram': return Icons.camera_alt_outlined;
-      case 'spotify': return Icons.music_note;
-      case 'twitch': return Icons.videocam_outlined;
-      default: return Icons.language;
-    }
   }
 
   Widget _platformBadge(ColorScheme cs) {

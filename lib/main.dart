@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:omniversify_widget/omniversify_widget.dart';
 import 'core/config/api_config.dart';
 import 'models/post.dart';
 import 'data/dummy_data.dart';
 import 'services/audio_player_service.dart';
+import 'services/date_cache.dart';
+import 'services/date_service.dart';
+import 'services/deep_link_service.dart';
 import 'widgets/widgets.dart';
-import 'widgets/date_header_widget.dart';
 import 'screens/scrolls_screen.dart';
 import 'screens/tools_screen.dart';
 import 'screens/settings_screen.dart';
 
+/// Root navigator — deep links open the Comments panel through it.
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Clean URLs on web (no # in shared comment links).
+  usePathUrlStrategy();
   MediaKit.ensureInitialized();
   await ApiConfig.load();
   // Start media session + load persisted player settings before first frame
@@ -22,6 +30,10 @@ void main() async {
   await audio.init();
   await audio.connectAudioService();
   runApp(const ProviderScope(child: OmniversifySocialApp()));
+  // Handle app/web links once the first frame is up.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    DeepLinkService.instance.init(rootNavigatorKey);
+  });
 }
 
 class OmniversifySocialApp extends ConsumerWidget {
@@ -34,6 +46,7 @@ class OmniversifySocialApp extends ConsumerWidget {
 
     return MaterialApp(
       title: 'Omniversify Social',
+      navigatorKey: rootNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: OmniversifyTheme.buildCatppuccin(
         palette: provider.flavor,
@@ -56,9 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final gold = Theme.of(context).colorScheme.primary;
     final isScrolls = _selectedIndex == 2;
-    final showFab = _selectedIndex == 0;
 
     return Scaffold(
       appBar: isScrolls
@@ -67,20 +78,24 @@ class _HomeScreenState extends State<HomeScreen> {
               backgroundColor: Colors.transparent,
               elevation: 0,
               scrolledUnderElevation: 0,
-              leading: IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                onPressed: () => Scaffold.of(context).openDrawer(),
+              leading: Builder(
+                builder: (context) => IconButton(
+                  icon: const Icon(Icons.notifications_outlined),
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                ),
               ),
               title: Text(OmniversifyConstants.appName, style: TextStyle(fontWeight: FontWeight.w700)),
               actions: [
                 if (_selectedIndex == 0)
                   IconButton(
                     icon: const Icon(Icons.add_circle_outline),
-                    onPressed: () {},
+                    onPressed: _showCreatePostDialog,
                   ),
-                IconButton(
-                  icon: const Icon(Icons.menu),
-                  onPressed: () => Scaffold.of(context).openEndDrawer(),
+                Builder(
+                  builder: (context) => IconButton(
+                    icon: const Icon(Icons.menu),
+                    onPressed: () => Scaffold.of(context).openEndDrawer(),
+                  ),
                 ),
               ],
             ),
@@ -102,13 +117,84 @@ class _HomeScreenState extends State<HomeScreen> {
           NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'Profile'),
         ],
       ),
-      floatingActionButton: showFab
-          ? FloatingActionButton(
-              backgroundColor: gold,
-              onPressed: () {},
-              child: Icon(Icons.add, color: Theme.of(context).colorScheme.surface),
-            )
-          : null,
+    );
+  }
+
+  void _showCreatePostDialog() {
+    final gold = Theme.of(context).colorScheme.primary;
+    final types = <(String, IconData)>[
+      ('Thought', Icons.chat_bubble_outline),
+      ('Story', Icons.auto_awesome_outlined),
+      ('Movie', Icons.movie_outlined),
+      ('Series', Icons.tv_outlined),
+      ('Song', Icons.music_note_outlined),
+      ('Podcast', Icons.podcasts_outlined),
+      ('Link', Icons.link_outlined),
+      ('Activity', Icons.fitness_center_outlined),
+      ('Location', Icons.location_on_outlined),
+      ('Anime', Icons.animation_outlined),
+      ('Book', Icons.menu_book_outlined),
+      ('Game', Icons.sports_esports_outlined),
+      ('Photo/Video', Icons.photo_library_outlined),
+      ('File', Icons.attach_file_outlined),
+    ];
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create post'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: GridView.count(
+            crossAxisCount: 3,
+            shrinkWrap: true,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: 0.95,
+            children: [
+              for (final (label, icon) in types)
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () {
+                    Navigator.of(dialogContext).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Creating a $label post'),
+                        duration: const Duration(seconds: 2),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(dialogContext).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: gold.withAlpha(40), width: 0.5),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(icon, color: gold, size: 26),
+                        const SizedBox(height: 8),
+                        Text(
+                          label,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(dialogContext).textTheme.bodySmall?.copyWith(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -131,7 +217,7 @@ class FeedScreen extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 80),
       itemCount: dummyPosts.length + 1,
       itemBuilder: (context, index) {
-        if (index == 0) return const DateHeader();
+        if (index == 0) return const StoriesRow();
         return _buildPost(dummyPosts[index - 1]);
       },
     );
@@ -341,12 +427,51 @@ Widget _buildPost(Post post) {
 }
 
 // ─── Notifications Drawer (left) ─────────────────────────────
-class NotificationsDrawer extends StatelessWidget {
+class NotificationsDrawer extends StatefulWidget {
   const NotificationsDrawer({super.key});
+
+  @override
+  State<NotificationsDrawer> createState() => _NotificationsDrawerState();
+}
+
+class _NotificationsDrawerState extends State<NotificationsDrawer> {
+  TripleDate? _dates;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  /// Show the cached dates first, then fetch the live date.
+  /// Keep the cache when they match; replace it when they don't.
+  Future<void> _load() async {
+    final cached = await DateCache.load();
+    if (cached != null && mounted) {
+      setState(() => _dates = cached);
+    }
+
+    setState(() => _refreshing = true);
+    try {
+      final fresh = await DateService.fetchToday();
+      if (!mounted) return;
+      final same = cached != null && DateCache.isSameDay(cached, fresh);
+      if (!same || _dates == null) {
+        await DateCache.save(fresh);
+        if (mounted) setState(() => _dates = fresh);
+      }
+    } catch (_) {
+      // Offline / API down — keep whatever is already on screen.
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final gold = Theme.of(context).colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
 
     final notifications = [
       ('Ahmed liked your post', '2m ago', Icons.favorite, Colors.red),
@@ -370,9 +495,18 @@ class NotificationsDrawer extends StatelessWidget {
                   Icon(Icons.notifications_outlined, color: gold, size: 22),
                   const SizedBox(width: 8),
                   Text('Notifications', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  if (_refreshing)
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5, color: gold),
+                    ),
                 ],
               ),
             ),
+            const Divider(height: 1),
+            _DatesColumn(dates: _dates, gold: gold),
             const Divider(height: 1),
             Expanded(
               child: ListView.builder(
@@ -387,7 +521,7 @@ class NotificationsDrawer extends StatelessWidget {
                       child: Icon(icon, size: 18, color: color),
                     ),
                     title: Text(text, style: const TextStyle(fontSize: 13)),
-                    subtitle: Text(time, style: TextStyle(fontSize: 11, color: Theme.of(context).textTheme.bodySmall?.color)),
+                    subtitle: Text(time, style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(150))),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                   );
                 },
@@ -395,6 +529,117 @@ class NotificationsDrawer extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Vertical column of today's calendar dates (year included).
+/// Falls back to a local Gregorian date until the cache / API lands.
+class _DatesColumn extends StatelessWidget {
+  const _DatesColumn({required this.dates, required this.gold});
+
+  final TripleDate? dates;
+  final Color gold;
+
+  static const _enDays = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+  ];
+  static const _enMonths = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  // DateTime.weekday: 1 = Monday … 7 = Sunday
+  static const _arDays = [
+    'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد',
+  ];
+  static const _tfDays = [
+    'ⴰⵢⵏⴰⵙ', 'ⴰⵙⵉⵏⴰⵙ', 'ⴰⴽⵕⴰⵙ', 'ⴰⴽⵡⴰⵙ',
+    'ⴰⵙⵉⵎⵡⴰⵙ', 'ⴰⵙⵉⴹⵢⴰⵙ', 'ⴰⵙⴰⵎⴰⵙ',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final weekdayIdx = now.weekday - 1;
+
+    final rows = <(String, String, IconData)>[
+      if (dates != null) ...[
+        (
+          '${_enDays[weekdayIdx]}, ${dates!.gregorian.year} · ${dates!.gregorian.day} ${dates!.gregorian.month.latin}',
+          'Gregorian',
+          Icons.calendar_today_outlined,
+        ),
+        (
+          '${_arDays[weekdayIdx]} ${dates!.islamic.day} ${dates!.islamic.month.arabic} ${dates!.islamic.year}',
+          'Islamic',
+          Icons.mosque_outlined,
+        ),
+        (
+          '${_tfDays[weekdayIdx]} ${dates!.amazigh.day} ${dates!.amazigh.month.tifinagh} ${dates!.amazigh.year}',
+          'Amazigh',
+          Icons.public,
+        ),
+      ] else (
+        '${_enDays[weekdayIdx]}, ${now.day} ${_enMonths[now.month - 1]} ${now.year}',
+        'Gregorian',
+        Icons.calendar_today_outlined,
+      ),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'DATES',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.1,
+                  color: gold,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (value, label, icon) in rows)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Icon(icon, size: 14, color: gold),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              value,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                            Text(
+                              label,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    fontSize: 10,
+                                    color: cs.onSurface.withAlpha(140),
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }

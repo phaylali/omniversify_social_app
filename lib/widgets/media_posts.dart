@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/post.dart';
 import 'post_components.dart';
 import 'image_preview.dart';
+import 'app_logo.dart';
 
 class MoviePostWidget extends StatelessWidget {
   final Post post;
@@ -95,7 +96,7 @@ class _MediaPostCardState extends State<_MediaPostCard> {
             onAvatarTap: PostHeader.avatarTapHandler(context, widget.post.user),
           ),
           const SizedBox(height: 8),
-          Text(widget.post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.4)),
+          Text(widget.post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.4)),
           const SizedBox(height: 8),
 
           // ── Poster + Metadata ──
@@ -118,12 +119,7 @@ class _MediaPostCardState extends State<_MediaPostCard> {
                         width: 100,
                         height: 150,
                         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: Icon(
-                          widget.post.type == PostType.movie ? Icons.movie :
-                          widget.post.type == PostType.tvShow ? Icons.tv : Icons.animation,
-                          size: 28,
-                          color: Theme.of(context).textTheme.bodySmall?.color,
-                        ),
+                        child: const AppLogo(size: 40, fit: BoxFit.contain),
                       ),
                     ),
                   ),

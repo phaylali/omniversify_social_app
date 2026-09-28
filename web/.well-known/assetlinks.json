@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.omniversify.app",
+    "sha256_cert_fingerprints": ["B2:B1:82:E1:C2:2D:2A:FC:95:B4:02:BE:C3:87:AA:7B:DA:E0:8E:37:5E:D0:F5:CB:FA:F3:54:13:14:3D:72:53"]
+  }
+}]

@@ -54,3 +54,4 @@ app.*.map.json
 
 # OpenCode session logs (contain API keys)
 omniversify-social-app.json
+.wrangler/

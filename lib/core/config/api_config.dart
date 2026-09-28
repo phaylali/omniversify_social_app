@@ -39,6 +39,8 @@ class ApiConfig {
   // ─── Omniversify Unified API ───────────────────────────────
 
   /// Backend API URL — defaults to localhost for development.
+  ///
+  /// The live backend URL lives only in `.env` (git-ignored), never here.
   static String get omniversifyApiUrl => _get('OMNIVERSIFY_API_URL').isEmpty
       ? 'http://localhost:8000'
       : _get('OMNIVERSIFY_API_URL');

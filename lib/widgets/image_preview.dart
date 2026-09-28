@@ -1,11 +1,17 @@
+import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'app_logo.dart';
+import 'file_image_stub.dart'
+    if (dart.library.io) 'file_image.dart';
 
 class ImagePreview extends StatefulWidget {
   final String imageUrl;
+  final String? imageFile;
+  final Uint8List? imageBytes;
   final String? heroTag;
 
-  const ImagePreview({super.key, required this.imageUrl, this.heroTag});
+  const ImagePreview({super.key, required this.imageUrl, this.imageFile, this.imageBytes, this.heroTag});
 
   static void show(BuildContext context, String imageUrl, {String? heroTag}) {
     Navigator.of(context).push(PageRouteBuilder(
@@ -14,6 +20,28 @@ class ImagePreview extends StatefulWidget {
       barrierDismissible: true,
       pageBuilder: (_, __, ___) => ImagePreview(imageUrl: imageUrl, heroTag: heroTag),
       transitionsBuilder: (_, anim, __, child) => FadeTransition(opacity: anim, child: child),
+    ));
+  }
+
+  /// Full-screen preview for a local image file (e.g. a comment attachment).
+  static void showFile(BuildContext context, String filePath, {String? heroTag}) {
+    Navigator.of(context).push(PageRouteBuilder(
+      opaque: false,
+      barrierColor: Colors.black87,
+      barrierDismissible: true,
+      pageBuilder: (_, _, _) => ImagePreview(imageUrl: filePath, imageFile: filePath, heroTag: heroTag),
+      transitionsBuilder: (_, anim, _, child) => FadeTransition(opacity: anim, child: child),
+    ));
+  }
+
+  /// Full-screen preview for raw bytes (e.g. an image picked on web).
+  static void showMemory(BuildContext context, Uint8List bytes, {String? heroTag}) {
+    Navigator.of(context).push(PageRouteBuilder(
+      opaque: false,
+      barrierColor: Colors.black87,
+      barrierDismissible: true,
+      pageBuilder: (_, _, _) => ImagePreview(imageUrl: '', imageBytes: bytes, heroTag: heroTag),
+      transitionsBuilder: (_, anim, _, child) => FadeTransition(opacity: anim, child: child),
     ));
   }
 
@@ -44,11 +72,23 @@ class _ImagePreviewState extends State<ImagePreview> {
                 maxScale: 5.0,
                 child: Hero(
                   tag: widget.heroTag ?? widget.imageUrl,
-                  child: Image.network(
-                    widget.imageUrl,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white54, size: 64),
-                  ),
+                child: widget.imageBytes != null
+                      ? Image.memory(
+                          widget.imageBytes!,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, _, _) => const AppLogo(size: 80, fit: BoxFit.contain),
+                        )
+                    : widget.imageFile != null
+                        ? fileImage(
+                            widget.imageFile!,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const AppLogo(size: 80, fit: BoxFit.contain),
+                          )
+                        : Image.network(
+                            widget.imageUrl,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const AppLogo(size: 80, fit: BoxFit.contain),
+                          ),
                 ),
               ),
             ),

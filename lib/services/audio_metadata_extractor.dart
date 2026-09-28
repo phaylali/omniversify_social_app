@@ -3,7 +3,8 @@ import 'dart:typed_data';
 import '../models/song_item.dart';
 import 'audio_duration_parser.dart';
 import 'audio_metadata_cache.dart';
-import 'taglib_audio_service.dart';
+import 'taglib_audio_service_stub.dart'
+    if (dart.library.io) 'taglib_audio_service.dart';
 
 /// Extracts metadata (duration, artwork, artist, album) from audio files.
 /// Pure Dart: fast header reads only, no player needed.

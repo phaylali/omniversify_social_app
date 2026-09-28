@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/post.dart';
 import 'post_components.dart';
 import 'image_preview.dart';
+import 'app_logo.dart';
 
 class LocationPostWidget extends StatelessWidget {
   final Post post;
@@ -26,7 +27,7 @@ class LocationPostWidget extends StatelessWidget {
             onAvatarTap: PostHeader.avatarTapHandler(context, post.user),
           ),
           const SizedBox(height: 8),
-          Text(post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.4)),
+          Text(post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.4)),
           const SizedBox(height: 8),
 
           GestureDetector(
@@ -43,7 +44,7 @@ class LocationPostWidget extends StatelessWidget {
                   errorBuilder: (_, __, ___) => Container(
                     height: 130,
                     color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: const Center(child: Icon(Icons.location_on_outlined, size: 36)),
+                    child: const Center(child: AppLogo(size: 48, fit: BoxFit.contain)),
                   ),
                 ),
                 Positioned(
@@ -137,7 +138,7 @@ class WorkoutPostWidget extends StatelessWidget {
             onAvatarTap: PostHeader.avatarTapHandler(context, post.user),
           ),
           const SizedBox(height: 8),
-          Text(post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.4)),
+          Text(post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.4)),
           const SizedBox(height: 8),
 
           Container(

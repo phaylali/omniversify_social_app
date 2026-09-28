@@ -4,7 +4,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/song_item.dart';
-import 'artwork_loader.dart';
+import 'artwork_loader_stub.dart'
+    if (dart.library.io) 'artwork_loader.dart';
 import 'widget_service.dart';
 
 /// Repeat modes for the music player.
@@ -236,6 +237,20 @@ class AudioPlayerService {
     if (_shuffleOn) _buildShuffleQueue();
   }
 
+  /// Stop playback and clear the current track selection.
+  /// Used when the playing file was deleted.
+  void clearCurrent() {
+    _player.stop();
+    _isPlaying = false;
+    _position = Duration.zero;
+    _duration = Duration.zero;
+    _currentIndex = null;
+    _emit();
+  }
+
+  /// Force a UI/media-session refresh (e.g. after metadata was edited).
+  void refresh() => _emit();
+
   // ── Playback controls ───────────────────────────────────
 
   /// Play the track at [index]. Uses cached duration for instant UI update;
@@ -434,7 +449,9 @@ class AudioPlayerService {
     final song = currentSong;
     if (song == null || _audioHandler == null) return;
     final artPath = _lastArtSongPath == song.path ? _lastArtPath : null;
-    final key = '${song.path}|$artPath|${_duration.inMilliseconds}';
+    // Title/artist in the key so a metadata edit refreshes the notification.
+    final key =
+        '${song.path}|${song.title}|${song.artist}|$artPath|${_duration.inMilliseconds}';
     if (key == _lastMediaItemKey) return;
     _lastMediaItemKey = key;
     _audioHandler!.mediaItem.add(_buildMediaItem(song, artPath: artPath));
@@ -448,9 +465,10 @@ class AudioPlayerService {
     if (handler == null) return;
     try {
       final bytes = await ArtworkLoader.instance.load(song);
-      if (bytes == null || bytes.isEmpty) return;
       // Song changed while we were loading — drop stale art.
       if (currentSong?.path != song.path) return;
+      // Missing art falls back to the bundled logo so the notification/widget
+      // always have an image instead of going blank.
       final file = await ArtworkLoader.instance.writeForNotification(song, bytes);
       if (file == null) return;
       if (currentSong?.path != song.path) return;
@@ -492,7 +510,7 @@ class AudioPlayerService {
             ? Uri.file(_lastArtPath!).toString()
             : null);
     final key =
-        '${song.path}|${song.artist}|$_isPlaying|$artUri';
+        '${song.path}|${song.title}|${song.artist}|$_isPlaying|$artUri';
     if (key == _lastWidgetKey) return;
     _lastWidgetKey = key;
     MusicWidgetService.instance.save(

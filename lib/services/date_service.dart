@@ -26,6 +26,12 @@ class TripleDate {
         islamic: CalendarDate.fromJson(json['islamic']),
         amazigh: CalendarDate.fromJson(json['amazigh']),
       );
+
+  Map<String, dynamic> toJson() => {
+        'gregorian': gregorian.toJson(),
+        'islamic': islamic.toJson(),
+        'amazigh': amazigh.toJson(),
+      };
 }
 
 class CalendarDate {
@@ -40,6 +46,12 @@ class CalendarDate {
         day: json['day'],
         month: MonthMonth.fromJson(json['month']),
       );
+
+  Map<String, dynamic> toJson() => {
+        'year': year,
+        'day': day,
+        'month': month.toJson(),
+      };
 
   String get display => '$day ${month.latin} $year';
 }
@@ -58,4 +70,11 @@ class MonthMonth {
         tifinagh: json['tifinagh'],
         arabic: json['arabic'],
       );
+
+  Map<String, dynamic> toJson() => {
+        'order': order,
+        'latin': latin,
+        'tifinagh': tifinagh,
+        'arabic': arabic,
+      };
 }

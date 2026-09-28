@@ -5,6 +5,7 @@ import '../models/post.dart';
 import 'post_components.dart';
 import 'image_preview.dart';
 import 'link_preview_widget.dart';
+import 'app_logo.dart';
 
 class TextPostWidget extends StatelessWidget {
   final Post post;
@@ -20,7 +21,7 @@ class TextPostWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final urls = _extractUrls(post.text);
     final accent = Theme.of(context).colorScheme.primary;
-    final bodyStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.4);
+    final bodyStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.4);
 
     return PostCard(
       child: Column(
@@ -117,7 +118,7 @@ class ImagePostWidget extends StatelessWidget {
             onAvatarTap: PostHeader.avatarTapHandler(context, post.user),
           ),
           const SizedBox(height: 8),
-          Text(post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.4)),
+          Text(post.text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.4)),
           const SizedBox(height: 8),
           GestureDetector(
             onLongPress: () => ImagePreview.show(context, post.imageUrl ?? ''),
@@ -131,7 +132,7 @@ class ImagePostWidget extends StatelessWidget {
                 errorBuilder: (_, __, ___) => Container(
                   height: 200,
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: const Center(child: Icon(Icons.image_outlined, size: 40)),
+                  child: const Center(child: AppLogo(size: 64, fit: BoxFit.contain)),
                 ),
               ),
             ),

@@ -26,13 +26,14 @@ class MusicWidgetService {
       await HomeWidget.saveWidgetData<bool>(_kPlaying, isPlaying);
       if (artworkUri != null) {
         await HomeWidget.saveWidgetData<String>(_kArtwork, artworkUri);
+      } else {
+        await HomeWidget.saveWidgetData<String>(_kArtwork, '');
       }
       if (!_enabled) {
         _enabled = true;
       }
       await HomeWidget.updateWidget(
-        qualifiedAndroidName:
-            'com.omniversify.omniversify_social_app.MusicWidgetProvider',
+        qualifiedAndroidName: 'com.omniversify.app.MusicWidgetProvider',
       );
     } catch (_) {
       // Widget is best-effort — never break playback for it.

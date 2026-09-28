@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
   omniversify_widget:
     path: ../omniversify_widget
   flutter_riverpod: ^3.4.3
@@ -33,6 +35,8 @@ dependencies:
   share_plus: ^13.3.0
   path_provider: ^2.1.6
   home_widget: ^0.10.0
+  image_picker: ^1.2.3
+  app_links: ^7.2.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -43,3 +47,5 @@ flutter:
   assets:
     - .env
     - assets/tones/
+    - assets/logo/logo.webp
+    - assets/logo/favicon.svg
