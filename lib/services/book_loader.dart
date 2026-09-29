@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'package:koni_archive/koni_archive.dart';
 import 'package:pdfx/pdfx.dart';
 
 /// The four file types the reader opens.
@@ -154,104 +154,103 @@ abstract final class BookLoader {
 
   // ── Comics ────────────────────────────────────────────────────────────
 
-  static BookDocument _openComic(
+  static Future<BookDocument> _openComic(
     Uint8List bytes,
     BookFormat format,
     String title,
-  ) {
-    final Archive archive = _decodeZip(bytes, format, title);
+  ) async {
+    final archive = await _openArchive(bytes, format, title);
+    try {
+      final pages =
+          archive.files
+              .where(
+                (page) => _imageExtensions.contains(_extensionOf(page.path)),
+              )
+              .toList()
+            ..sort((a, b) => _naturalCompare(a.path, b.path));
 
-    final files =
-        archive
-            .where(
-              (file) =>
-                  file.isFile &&
-                  _imageExtensions.contains(_extensionOf(file.name)),
-            )
-            .toList()
-          ..sort((a, b) => _naturalCompare(a.name, b.name));
-
-    final images = <Uint8List>[];
-    for (final file in files) {
-      final data = file.readBytes();
-      if (data != null && data.isNotEmpty) images.add(data);
+      final images = <Uint8List>[];
+      for (final page in pages) {
+        final data = await _readEntry(archive, page, title);
+        if (data.isNotEmpty) images.add(data);
+      }
+      if (images.isEmpty) {
+        throw BookOpenException('"$title" has no images inside it.');
+      }
+      return BookDocument(title: title, format: format, images: images);
+    } finally {
+      await archive.close();
     }
-    if (images.isEmpty) {
-      throw BookOpenException('"$title" has no images inside it.');
-    }
-    return BookDocument(title: title, format: format, images: images);
   }
 
   // ── EPUB ──────────────────────────────────────────────────────────────
 
-  static BookDocument _openEpub(Uint8List bytes, String title) {
-    final Archive archive = _decodeZip(bytes, BookFormat.epub, title);
-
-    final entries = <String, ArchiveFile>{
-      for (final file in archive)
-        if (file.isFile) _normalizeName(file.name): file,
-    };
-
-    String readText(String name) {
-      final file = entries[_normalizeName(name)];
-      if (file == null) return '';
-      final data = file.readBytes();
-      if (data == null || data.isEmpty) return '';
-      return utf8.decode(data, allowMalformed: true);
-    }
-
-    final container = readText('META-INF/container.xml');
-    final opfPath = RegExp(r'full-path="([^"]+)"')
-        .firstMatch(container)
-        ?.group(1);
-    if (opfPath == null) {
-      throw BookOpenException('"$title" has no readable table of contents.');
-    }
-    final opf = readText(opfPath);
-    if (opf.isEmpty) {
-      throw BookOpenException('"$title" is missing its book file.');
-    }
-    final baseDir = opfPath.contains('/')
-        ? opfPath.substring(0, opfPath.lastIndexOf('/'))
-        : '';
-
-    // Manifest: id → file (only the text-ish documents matter to a reader).
-    final manifest = <String, String>{};
-    for (final tag in RegExp(r'<item\b[^>]*>').allMatches(opf)) {
-      final attrs = tag.group(0)!;
-      final id = _attr(attrs, 'id');
-      final href = _attr(attrs, 'href');
-      if (id == null || href == null) continue;
-      final mediaType = _attr(attrs, 'media-type') ?? '';
-      if (mediaType.contains('html') ||
-          mediaType.contains('xml') ||
-          mediaType.isEmpty) {
-        manifest[id] = href;
+  static Future<BookDocument> _openEpub(Uint8List bytes, String title) async {
+    final archive = await _openArchive(bytes, BookFormat.epub, title);
+    try {
+      Future<String> readText(String name) async {
+        final entry = archive.entry(_normalizeName(name));
+        if (entry == null) return '';
+        final data = await _readEntry(archive, entry, title);
+        if (data.isEmpty) return '';
+        return utf8.decode(data, allowMalformed: true);
       }
-    }
 
-    // Spine: the reading order.
-    final chapters = <BookChapter>[];
-    for (final tag in RegExp(r'<itemref\b[^>]*>').allMatches(opf)) {
-      if (chapters.length >= 300) break;
-      final idref = _attr(tag.group(0)!, 'idref');
-      if (idref == null) continue;
-      final href = manifest[idref];
-      if (href == null) continue;
-      final html = readText(_resolve(baseDir, href));
-      if (html.trim().isEmpty) continue;
-      final body = htmlToText(html);
-      if (body.isEmpty) continue;
-      chapters.add(BookChapter(title: _chapterTitle(html, href), body: body));
+      final container = await readText('META-INF/container.xml');
+      final opfPath = RegExp(r'full-path="([^"]+)"')
+          .firstMatch(container)
+          ?.group(1);
+      if (opfPath == null) {
+        throw BookOpenException('"$title" has no readable table of contents.');
+      }
+      final opf = await readText(opfPath);
+      if (opf.isEmpty) {
+        throw BookOpenException('"$title" is missing its book file.');
+      }
+      final baseDir = opfPath.contains('/')
+          ? opfPath.substring(0, opfPath.lastIndexOf('/'))
+          : '';
+
+      // Manifest: id → file (only the text-ish documents matter to a reader).
+      final manifest = <String, String>{};
+      for (final tag in RegExp(r'<item\b[^>]*>').allMatches(opf)) {
+        final attrs = tag.group(0)!;
+        final id = _attr(attrs, 'id');
+        final href = _attr(attrs, 'href');
+        if (id == null || href == null) continue;
+        final mediaType = _attr(attrs, 'media-type') ?? '';
+        if (mediaType.contains('html') ||
+            mediaType.contains('xml') ||
+            mediaType.isEmpty) {
+          manifest[id] = href;
+        }
+      }
+
+      // Spine: the reading order.
+      final chapters = <BookChapter>[];
+      for (final tag in RegExp(r'<itemref\b[^>]*>').allMatches(opf)) {
+        if (chapters.length >= 300) break;
+        final idref = _attr(tag.group(0)!, 'idref');
+        if (idref == null) continue;
+        final href = manifest[idref];
+        if (href == null) continue;
+        final html = await readText(_resolve(baseDir, href));
+        if (html.trim().isEmpty) continue;
+        final body = htmlToText(html);
+        if (body.isEmpty) continue;
+        chapters.add(BookChapter(title: _chapterTitle(html, href), body: body));
+      }
+      if (chapters.isEmpty) {
+        throw BookOpenException('"$title" has no readable chapters.');
+      }
+      return BookDocument(
+        title: title,
+        format: BookFormat.epub,
+        chapters: chapters,
+      );
+    } finally {
+      await archive.close();
     }
-    if (chapters.isEmpty) {
-      throw BookOpenException('"$title" has no readable chapters.');
-    }
-    return BookDocument(
-      title: title,
-      format: BookFormat.epub,
-      chapters: chapters,
-    );
   }
 
   /// First heading-ish text in the chapter, falling back to the file name.
@@ -324,35 +323,55 @@ abstract final class BookLoader {
   static String? _attr(String tag, String name) =>
       RegExp('\\b$name="([^"]*)"').firstMatch(tag)?.group(1);
 
-  /// `PK`, the magic every zip — and so every EPUB, CBZ and "CBR that is
-  /// really a zip" — starts with.
-  static bool _looksLikeZip(Uint8List bytes) =>
-      bytes.length >= 2 && bytes[0] == 0x50 && bytes[1] == 0x4B;
-
-  /// Decodes [bytes] as a zip, or throws the explanation it deserves.
+  /// Opens [bytes] as an archive, whatever container it really is.
   ///
-  /// The signature is checked first: a RAR decodes to an empty archive
-  /// instead of failing, which would read as "your comic is empty" rather
-  /// than "this is the one format we can't unpack".
-  static Archive _decodeZip(Uint8List bytes, BookFormat format, String title) {
-    if (_looksLikeZip(bytes)) {
-      try {
-        return ZipDecoder().decodeBytes(bytes);
-      } catch (_) {
-        // Corrupt zip — fall through to the explanation below.
-      }
-    }
-    if (format == BookFormat.cbr) {
-      throw const BookOpenException(
-        'CBR files are RAR archives, which can\'t be unpacked yet — '
-        'save the comic as .cbz instead.',
+  /// The format is auto-detected rather than trusted from the extension, so a
+  /// CBZ that is really a RAR — and a CBR that is really a zip — both open.
+  /// What comes back is an explanation a human can act on.
+  static Future<Archive> _openArchive(
+    Uint8List bytes,
+    BookFormat format,
+    String title,
+  ) async {
+    final what = format.isComic ? 'comic archive' : 'EPUB';
+    try {
+      return await Archive.openBytes(bytes);
+    } on EncryptedArchiveException {
+      throw BookOpenException(
+        '"$title" is locked with a password — unlock it and try again.',
+      );
+    } on UnsupportedFormatException {
+      throw BookOpenException('"$title" isn\'t a readable $what.');
+    } on ArchiveException {
+      throw BookOpenException(
+        '"$title" couldn\'t be unpacked — the file may be damaged.',
       );
     }
-    throw BookOpenException(
-      '"$title" isn\'t a readable '
-      '${format.isComic ? 'comic archive' : 'EPUB'}.',
-    );
   }
+
+  /// One file out of [archive], or nothing at all.
+  ///
+  /// A locked or unsupported entry only costs that page: one exotic file
+  /// shouldn't take a whole comic down with it.
+  static Future<Uint8List> _readEntry(
+    Archive archive,
+    ArchiveEntry entry,
+    String title,
+  ) async {
+    try {
+      return await archive.readBytes(entry, maxSize: _maxEntryBytes);
+    } on EncryptedArchiveException {
+      throw BookOpenException(
+        '"$title" is locked with a password — unlock it and try again.',
+      );
+    } on ArchiveException {
+      return Uint8List(0);
+    }
+  }
+
+  /// Cap on a single unpacked file, so a hostile archive can't ask for the
+  /// whole heap. No real page or chapter comes anywhere near it.
+  static const int _maxEntryBytes = 64 << 20;
 
   static String _extensionOf(String path) {
     final dot = path.lastIndexOf('.');
