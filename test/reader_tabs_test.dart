@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniversify_social_app/screens/folder_picker_screen.dart';
 import 'package:omniversify_social_app/screens/reader_screen.dart';
+import 'package:omniversify_social_app/services/book_loader.dart';
 import 'package:omniversify_social_app/services/discover_source.dart';
 import 'package:omniversify_social_app/services/local_books.dart';
 import 'package:omniversify_social_app/services/reader_library.dart';
@@ -164,6 +165,68 @@ void main() {
         find.textContaining('with a bar for how far you got'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('the Local search narrows the books already found', (
+      tester,
+    ) async {
+      final local = LocalBooksService.instance;
+      local.folders.value = ['/storage/emulated/0/Comics'];
+      local.byFolder.value = {
+        '/storage/emulated/0/Comics': const [
+          FoundBook(
+            path: '/storage/emulated/0/Comics/batman.cbz',
+            title: 'batman',
+            format: BookFormat.cbz,
+            sizeBytes: 5600000,
+          ),
+          FoundBook(
+            path: '/storage/emulated/0/Comics/spiderman.cbr',
+            title: 'spiderman',
+            format: BookFormat.cbr,
+            sizeBytes: 1200000,
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+
+      // The shelf shows both, each with where it lives.
+      expect(find.text('batman'), findsOneWidget);
+      expect(find.text('spiderman'), findsOneWidget);
+      expect(find.text('~/Comics/batman.cbz'), findsOneWidget);
+      expect(find.text('~/Comics/spiderman.cbr'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('local-book-search')),
+        'spider',
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // One flat list of matches, and the folder grouping steps aside.
+      expect(find.text('spiderman'), findsOneWidget);
+      expect(find.text('batman'), findsNothing);
+      expect(find.text('1 MATCH'), findsOneWidget);
+      expect(find.text('2 IN COMICS'), findsNothing);
+
+      // A query nothing answers says so instead of showing an empty shelf.
+      await tester.enterText(
+        find.byKey(const ValueKey('local-book-search')),
+        'zorro',
+      );
+      await tester.pump();
+      expect(
+        find.text('No local books match "zorro".'),
+        findsOneWidget,
+      );
+
+      // Clearing it puts the shelf back exactly as it was.
+      await tester.tap(find.byKey(const ValueKey('local-book-search-clear')));
+      await tester.pump();
+      expect(find.text('batman'), findsOneWidget);
+      expect(find.text('2 IN COMICS'), findsOneWidget);
     });
   });
 
@@ -356,6 +419,45 @@ void main() {
       );
       expect(books.map((book) => book.title), isNot(contains('readme')));
       expect(books.first.size, isNotEmpty);
+    });
+
+    test('a path reads as ~ wherever the phone keeps the file', () {
+      FoundBook book(String path) => FoundBook(
+        path: path,
+        title: 'x',
+        format: BookFormat.cbz,
+        sizeBytes: 1000,
+      );
+
+      expect(
+        book('/storage/emulated/0/Download/file.pdf').displayPath,
+        '~/Download/file.pdf',
+      );
+      expect(
+        book('/storage/emulated/0/Comics/autobackup/chapter1.cbz').displayPath,
+        '~/Comics/autobackup/chapter1.cbz',
+      );
+
+      // Long folder chains keep the name and the folder it sits in.
+      expect(
+        book(
+          '/storage/emulated/0/Documents/backup/older/comics/collection/'
+          'batman.cbz',
+        ).displayPath,
+        '~/…/collection/batman.cbz',
+      );
+
+      // When even that is too long, the file name is what survives.
+      expect(
+        book(
+          '/storage/emulated/0/Documents/library/backup/series/2026/omnibus/'
+          'the absolute batman omnibus volume one.cbz',
+        ).displayPath,
+        '~/…/the absolute batman omnibus volume one.cbz',
+      );
+
+      // A path outside shared storage isn't pretended to be home.
+      expect(book('/data/local/tmp/x.pdf').displayPath, '/data/local/tmp/x.pdf');
     });
 
     testWidgets('the folder browser lists the folders it can see', (

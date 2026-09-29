@@ -32,6 +32,27 @@ class FoundBook {
     return '$sizeBytes B';
   }
 
+  /// Where the file lives, as short as it can be while still readable —
+  /// `~/Download/chapter.cbz`, or `~/…/downloads/chapter.cbz` when the
+  /// folder chain is long. `~` stands for the phone's shared storage.
+  String get displayPath {
+    const home = '/storage/emulated/0';
+    final atHome = path.startsWith('$home/');
+    final display = atHome ? '~${path.substring(home.length)}' : path;
+    // The row gives the path about fifty characters before the file name
+    // would start getting cut off anyway.
+    if (display.length <= 52) return display;
+    final parts = display.split('/');
+    if (parts.length <= 3) return display;
+    // Keep the head (the "~" or the first folder) and the last two segments,
+    // since the file name and its folder are what identify the book.
+    final tail = parts.sublist(parts.length - 2).join('/');
+    final collapsed = '${parts.first}/…/$tail';
+    if (collapsed.length <= 52) return collapsed;
+    // Nothing deeper survives: the file name is the part that must.
+    return atHome ? '~/…/${parts.last}' : '…/${parts.last}';
+  }
+
   static FoundBook? fromFile(File file) {
     final dot = file.path.lastIndexOf('.');
     if (dot < 0) return null;

@@ -82,6 +82,10 @@ class _ReaderScreenState extends State<ReaderScreen>
   Timer? _recordTimer;
   int? _pendingPage;
 
+  // ── Local ─────────────────────────────────────────────────────────────
+  final TextEditingController _localSearchController = TextEditingController();
+  String _localQuery = '';
+
   // ── Discover ──────────────────────────────────────────────────────────
   final TextEditingController _searchController = TextEditingController();
   final List<DiscoverItem> _results = [];
@@ -109,6 +113,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     _controller?.dispose();
     _veil.dispose();
     _searchController.dispose();
+    _localSearchController.dispose();
     ActivityService.instance.reading.value = null;
     super.dispose();
   }
@@ -618,8 +623,12 @@ class _ReaderScreenState extends State<ReaderScreen>
               ),
             ),
           ],
+          if (service.allBooks.isNotEmpty || _localQuery.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _localSearchField(),
+          ],
           const SizedBox(height: 24),
-          ..._folderSections(),
+          if (_localQuery.trim().isEmpty) ..._folderSections() else ..._localMatches(),
           const SizedBox(height: 20),
           ..._formatBlurbs(),
           const SizedBox(height: 16),
@@ -627,6 +636,104 @@ class _ReaderScreenState extends State<ReaderScreen>
         ],
       ),
     );
+  }
+
+  /// Filters the books already found — folders and scan alike — by title or
+  /// by path, so a shelf of hundreds stays reachable.
+  Widget _localSearchField() {
+    final cs = Theme.of(context).colorScheme;
+    final gold = cs.primary;
+    return TextField(
+      key: const ValueKey('local-book-search'),
+      controller: _localSearchController,
+      onChanged: (value) => setState(() => _localQuery = value),
+      style: TextStyle(fontSize: 14, color: cs.onSurface),
+      decoration: InputDecoration(
+        hintText: 'Search your books…',
+        hintStyle: TextStyle(
+          fontSize: 14,
+          color: cs.onSurface.withAlpha(120),
+        ),
+        prefixIcon: Icon(Icons.search, size: 20, color: gold),
+        suffixIcon: _localQuery.isEmpty
+            ? null
+            : IconButton(
+                key: const ValueKey('local-book-search-clear'),
+                icon: Icon(Icons.close, size: 18, color: cs.outline),
+                onPressed: () {
+                  _localSearchController.clear();
+                  setState(() => _localQuery = '');
+                },
+              ),
+        filled: true,
+        fillColor: cs.surfaceContainerHighest.withAlpha(70),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: gold.withAlpha(70)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: gold.withAlpha(70)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: gold, width: 1.4),
+        ),
+      ),
+    );
+  }
+
+  /// One flat list of matches — grouping by folder stops helping the moment
+  /// the question is "which of my books mentions batman?".
+  List<Widget> _localMatches() {
+    final q = _localQuery.trim().toLowerCase();
+    final matches = [
+      for (final book in LocalBooksService.instance.allBooks)
+        if (book.title.toLowerCase().contains(q) ||
+            book.path.toLowerCase().contains(q))
+          book,
+    ];
+    if (matches.isEmpty) {
+      return [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Text(
+            'No local books match "$q".',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(150),
+            ),
+          ),
+        ),
+      ];
+    }
+    return [
+      _sectionLabel('${matches.length} match${matches.length == 1 ? '' : 'es'}'),
+      const SizedBox(height: 6),
+      for (final book in matches.take(100)) ...[
+        _bookRow(book),
+        Divider(
+          height: 1.5,
+          color: Theme.of(context).colorScheme.onSurface.withAlpha(30),
+        ),
+      ],
+      if (matches.length > 100)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Text(
+            'Showing 100 of ${matches.length} — keep typing to narrow it down.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(150),
+            ),
+          ),
+        ),
+    ];
   }
 
   Future<void> _addFolder() async {
@@ -794,6 +901,16 @@ class _ReaderScreenState extends State<ReaderScreen>
                     style: TextStyle(
                       fontSize: 11.5,
                       color: cs.onSurface.withAlpha(150),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    book.displayPath,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: cs.onSurface.withAlpha(110),
                     ),
                   ),
                 ],
