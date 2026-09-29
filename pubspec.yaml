@@ -47,5 +47,9 @@ flutter:
   assets:
     - .env
     - assets/tones/
+    - assets/achievements/Black/
+    - assets/achievements/Bronze/
+    - assets/achievements/Gold/
+    - assets/achievements/Silver/
     - assets/logo/logo.webp
     - assets/logo/favicon.svg

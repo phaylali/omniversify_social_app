@@ -31,6 +31,7 @@ class _GamePostWidgetState extends State<GamePostWidget> {
             handle: widget.post.user.handle,
             verified: widget.post.user.verified,
             timestamp: widget.post.timestamp,
+            visibility: widget.post.visibility,
             onAvatarTap: PostHeader.avatarTapHandler(context, widget.post.user),
           ),
           const SizedBox(height: 8),

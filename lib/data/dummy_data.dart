@@ -1,8 +1,8 @@
 import '../models/post.dart';
 
 const currentUser = PostUser(
-  name: 'Youssef',
-  handle: '@youssef_ma',
+  name: 'Phaylali',
+  handle: '@phaylali',
   verified: true,
 );
 
@@ -246,6 +246,9 @@ class ScrollItem {
   final String? videoUrl;
   final String? imageUrl;
 
+  /// Audience for this scroll — private scrolls disable sharing.
+  final PostVisibility visibility;
+
   const ScrollItem({
     required this.id,
     required this.username,
@@ -254,13 +257,14 @@ class ScrollItem {
     this.comments = 0,
     this.videoUrl,
     this.imageUrl,
+    this.visibility = PostVisibility.public,
   });
 }
 
 final dummyScrolls = [
   const ScrollItem(
     id: 'scroll_0',
-    username: '@youssef_ma',
+    username: '@phaylali',
     caption: 'Sunset timelapse from the rooftop #goldenhour # Morocco',
     likes: 2400,
     comments: 186,
@@ -308,7 +312,7 @@ final dummyScrolls = [
   ),
   const ScrollItem(
     id: 'scroll_6',
-    username: '@youssef_ma',
+    username: '@phaylali',
     caption: 'The Hassan II Mosque at night #casablanca #architecture',
     likes: 7200,
     comments: 489,

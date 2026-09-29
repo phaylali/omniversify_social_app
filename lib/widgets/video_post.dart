@@ -18,6 +18,7 @@ class VideoPostWidget extends StatelessWidget {
             handle: post.user.handle,
             verified: post.user.verified,
             timestamp: post.timestamp,
+            visibility: post.visibility,
             onAvatarTap: PostHeader.avatarTapHandler(context, post.user),
           ),
           if (post.text.isNotEmpty)

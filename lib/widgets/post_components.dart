@@ -5,6 +5,8 @@ import '../models/post.dart';
 import '../data/post_state.dart';
 import '../data/dummy_data.dart';
 import '../core/config/api_config.dart';
+import '../services/mute_service.dart';
+import 'action_sheet.dart';
 import 'post_interaction_panel.dart';
 import 'share_sheet.dart';
 
@@ -25,6 +27,7 @@ class PostHeader extends StatelessWidget {
   final String handle;
   final bool verified;
   final DateTime timestamp;
+  final PostVisibility visibility;
   final VoidCallback? onAvatarTap;
 
   const PostHeader({
@@ -33,6 +36,7 @@ class PostHeader extends StatelessWidget {
     required this.handle,
     this.verified = false,
     required this.timestamp,
+    this.visibility = PostVisibility.public,
     this.onAvatarTap,
   });
 
@@ -80,37 +84,106 @@ class PostHeader extends StatelessWidget {
                     const SizedBox(width: 3),
                     Icon(Icons.verified, size: 14, color: gold),
                   ],
+                  if (visibility == PostVisibility.private) ...[
+                    const SizedBox(width: 5),
+                    // Privacy indicator — private posts are never shareable.
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.lock_outline, size: 11, color: Theme.of(context).textTheme.bodySmall?.color),
+                          const SizedBox(width: 3),
+                          Text(
+                            'Private',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
               Text('$handle · ${_timeAgo(timestamp)}', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11)),
             ],
           ),
         ),
-        // Three dots menu
-        PopupMenuButton<String>(
-          icon: Icon(Icons.more_horiz, size: 20, color: Theme.of(context).textTheme.bodySmall?.color),
+        // Three dots menu — the same sheet the scrolls menu opens.
+        IconButton(
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
-          onSelected: (value) {
-            if (value == 'copy_link') {
-              Clipboard.setData(ClipboardData(text: '${ApiConfig.omniversifyAppUrl}/post/${name.toLowerCase()}'));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Link copied to clipboard'),
-                  duration: Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            }
-          },
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: 'report', child: Row(children: [Icon(Icons.flag_outlined, size: 18, color: Colors.red), SizedBox(width: 8), Text('Report', style: TextStyle(color: Colors.red))])),
-            const PopupMenuItem(value: 'block', child: Row(children: [Icon(Icons.block, size: 18, color: Colors.red), SizedBox(width: 8), Text('Block', style: TextStyle(color: Colors.red))])),
-            const PopupMenuItem(value: 'mute', child: Row(children: [Icon(Icons.volume_off_outlined, size: 18), SizedBox(width: 8), Text('Mute')])),
-            const PopupMenuItem(value: 'copy_link', child: Row(children: [Icon(Icons.link, size: 18), SizedBox(width: 8), Text('Copy link')])),
-          ],
+          icon: Icon(Icons.more_horiz, size: 20, color: Theme.of(context).textTheme.bodySmall?.color),
+          onPressed: () => _showMenu(context),
         ),
       ],
+    );
+  }
+
+  /// Report the account, report the post, mute, block or copy the link —
+  /// laid out exactly like the scrolls `⋮` menu.
+  void _showMenu(BuildContext context) {
+    showActionSheet(
+      context,
+      title: name,
+      subtitle: handle,
+      items: [
+        ActionSheetItem(
+          icon: Icons.flag_outlined,
+          title: 'Report user',
+          subtitle: 'Tell us about $handle',
+          onTap: () =>
+              showActionNotice(context, 'Thanks — your report about $handle is in review'),
+        ),
+        ActionSheetItem(
+          icon: Icons.report_outlined,
+          title: 'Report content',
+          subtitle: 'Tell us about this post',
+          onTap: () => showActionNotice(context, 'Thanks — your report about this post is in review'),
+        ),
+        ActionSheetItem(
+          icon: Icons.volume_off_outlined,
+          title: 'Mute',
+          subtitle: 'Hide $handle\'s posts for now',
+          onTap: () => _hide(context, '$handle muted'),
+        ),
+        ActionSheetItem(
+          icon: Icons.block,
+          title: 'Block',
+          subtitle: 'Stop seeing $handle anywhere',
+          tone: ActionSheetTone.destructive,
+          onTap: () => _hide(context, '$handle blocked'),
+        ),
+        ActionSheetItem(
+          icon: Icons.link,
+          title: 'Copy link',
+          subtitle: 'Copy a link to this post',
+          onTap: () {
+            Clipboard.setData(ClipboardData(
+                text: '${ApiConfig.omniversifyAppUrl}/post/${name.toLowerCase()}'));
+            showActionNotice(context, 'Link copied to clipboard');
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Hides the author everywhere — feed, stories and scrolls — until the
+  /// player undoes it or the app restarts.
+  void _hide(BuildContext context, String message) {
+    MuteService.instance.mute(handle);
+    showActionNotice(
+      context,
+      message,
+      undoLabel: 'UNDO',
+      onUndo: () => MuteService.instance.unmute(handle),
     );
   }
 }
@@ -125,6 +198,9 @@ class PostFooter extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(postStateProvider)[postId];
     if (state == null) return const SizedBox.shrink();
+
+    // Private posts expose no working share action — the icon becomes a lock.
+    final canShare = state.visibility == PostVisibility.public;
 
     return Row(
       children: [
@@ -181,30 +257,45 @@ class PostFooter extends ConsumerWidget {
 
         // ── Share icon ──
         GestureDetector(
-          onTap: () {
-            final post = dummyPosts.where((p) => p.id == postId).firstOrNull;
-            ShareSheet.show(
-              context,
-              shareText: post != null
-                  ? postShareText(post.user.name, post.user.handle, post.text)
-                  : 'Check out this post',
-              onShared: () => ref.read(postStateProvider.notifier).share(postId),
-            );
-          },
+          onTap: canShare
+              ? () {
+                  final post = dummyPosts.where((p) => p.id == postId).firstOrNull;
+                  ShareSheet.show(
+                    context,
+                    shareText: post != null
+                        ? postShareText(post.user.name, post.user.handle, post.text)
+                        : 'Check out this post',
+                    onShared: () => ref.read(postStateProvider.notifier).share(postId),
+                  );
+                }
+              : () => ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Sharing is off for private posts'),
+                    duration: Duration(seconds: 2),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Icon(Icons.share_outlined, size: 18, color: Theme.of(context).textTheme.bodySmall?.color),
+            child: Icon(
+              canShare ? Icons.share_outlined : Icons.lock_outline,
+              size: 18,
+              color: canShare
+                  ? Theme.of(context).textTheme.bodySmall?.color
+                  : Theme.of(context).textTheme.bodySmall?.color?.withAlpha(110),
+            ),
           ),
         ),
 
-        // ── Share count ──
-        GestureDetector(
-          onTap: () => PostInteractionPanel.show(context, postId, initialTab: 2),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Text('${state.shares}', style: TextStyle(fontSize: 13, color: Theme.of(context).textTheme.bodySmall?.color)),
+        // ── Share count (public posts only) ──
+        if (canShare)
+          GestureDetector(
+            onTap: () => PostInteractionPanel.show(context, postId, initialTab: 2),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Text('${state.shares}', style: TextStyle(fontSize: 13, color: Theme.of(context).textTheme.bodySmall?.color)),
+            ),
           ),
-        ),
 
         const SizedBox(width: 8),
 

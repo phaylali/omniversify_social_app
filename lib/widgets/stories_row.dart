@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../data/dummy_data.dart';
 import '../models/post.dart';
+import '../services/mute_service.dart';
+import '../screens/story_viewer_screen.dart';
 
 /// Instagram-style story avatars shown at the top of the home feed.
 class StoriesRow extends StatelessWidget {
@@ -18,18 +20,40 @@ class StoriesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final gold = Theme.of(context).colorScheme.primary;
-    final users = _uniqueUsers();
 
     return SizedBox(
       height: 104,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        itemCount: users.length + 1,
-        itemBuilder: (context, index) {
-          if (index == 0) return _YourStory(gold: gold);
-          final user = users[index - 1];
-          return _StoryBubble(user: user, gold: gold);
+      child: ValueListenableBuilder<Set<String>>(
+        // Muted accounts lose their story bubble along with everything else.
+        valueListenable: MuteService.instance.muted,
+        builder: (context, muted, _) {
+          final users = [
+            for (final user in _uniqueUsers())
+              if (!muted.contains(user.handle)) user,
+          ];
+
+          return ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            itemCount: users.length + 1,
+            itemBuilder: (context, index) {
+              if (index == 0) return _YourStory(gold: gold);
+              final user = users[index - 1];
+              return _StoryBubble(
+                user: user,
+                gold: gold,
+                // Stories are still placeholders — this opens the viewer.
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => StoryViewerScreen(
+                      users: users,
+                      initialIndex: index - 1,
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
         },
       ),
     );
@@ -92,16 +116,19 @@ class _YourStory extends StatelessWidget {
 }
 
 class _StoryBubble extends StatelessWidget {
-  const _StoryBubble({required this.user, required this.gold});
+  const _StoryBubble({required this.user, required this.gold, this.onTap});
 
   final PostUser user;
   final Color gold;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: GestureDetector(
+      onTap: onTap,
       child: Column(
         children: [
           _ring(
@@ -128,6 +155,7 @@ class _StoryBubble extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

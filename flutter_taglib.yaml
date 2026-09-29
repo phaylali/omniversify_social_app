@@ -1,0 +1,4 @@
+# flutter_taglib pulls TagLib through native assets, which has no web target.
+# Disable it there so web builds never try to produce a code asset.
+platforms:
+  web: false

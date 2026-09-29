@@ -66,6 +66,9 @@ class PostState {
   final List<Comment> commentList;
   final List<PostUser> sharers;
 
+  /// Mirrors the source post's audience so widgets can gate sharing by id.
+  final PostVisibility visibility;
+
   const PostState({
     required this.likes,
     required this.liked,
@@ -75,6 +78,7 @@ class PostState {
     required this.likers,
     required this.commentList,
     required this.sharers,
+    this.visibility = PostVisibility.public,
   });
 
   PostState copyWith({
@@ -86,6 +90,7 @@ class PostState {
     List<PostUser>? likers,
     List<Comment>? commentList,
     List<PostUser>? sharers,
+    PostVisibility? visibility,
   }) {
     return PostState(
       likes: likes ?? this.likes,
@@ -96,6 +101,7 @@ class PostState {
       likers: likers ?? this.likers,
       commentList: commentList ?? this.commentList,
       sharers: sharers ?? this.sharers,
+      visibility: visibility ?? this.visibility,
     );
   }
 }
@@ -114,6 +120,7 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
           likers: _generateLikers(post.likes),
           commentList: _generateComments(post.id, post.comments),
           sharers: _generateSharers(post.shares),
+          visibility: post.visibility,
         ),
       };
     }
@@ -129,6 +136,7 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
           likers: _generateLikers(scroll.likes),
           commentList: _generateComments(scroll.id, scroll.comments),
           sharers: const [],
+          visibility: scroll.visibility,
         ),
       };
     }

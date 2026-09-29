@@ -5,11 +5,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:omniversify_widget/omniversify_widget.dart';
 import '../data/post_state.dart';
 import '../models/post.dart';
+import '../models/rank.dart';
+import '../services/relationship_service.dart';
 import 'file_image_stub.dart'
     if (dart.library.io) 'file_image.dart';
 import 'image_preview.dart';
 import 'post_components.dart';
 import 'share_sheet.dart';
+import 'xp_bar.dart';
 
 class PostInteractionPanel extends ConsumerStatefulWidget {
   final String postId;
@@ -74,7 +77,13 @@ class _PostInteractionPanelState extends ConsumerState<PostInteractionPanel> {
       );
     }
 
-    final tabs = ['Likes (${postState.likes})', 'Comments (${postState.comments})', 'Shares (${postState.shares})'];
+    // Private posts can't be shared, so the Shares tab doesn't exist for them.
+    final tabs = [
+      'Likes (${postState.likes})',
+      'Comments (${postState.comments})',
+      if (postState.visibility == PostVisibility.public) 'Shares (${postState.shares})',
+    ];
+    final selectedTab = _selectedTab.clamp(0, tabs.length - 1);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
@@ -103,8 +112,8 @@ class _PostInteractionPanelState extends ConsumerState<PostInteractionPanel> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
-                  children: List.generate(3, (i) {
-                    final isSelected = _selectedTab == i;
+                  children: List.generate(tabs.length, (i) {
+                    final isSelected = selectedTab == i;
                     return Expanded(
                       child: GestureDetector(
                         onTap: () => setState(() => _selectedTab = i),
@@ -137,14 +146,14 @@ class _PostInteractionPanelState extends ConsumerState<PostInteractionPanel> {
 
               // ── Content ──
               Expanded(
-                child: _selectedTab == 0
-                    ? _LikersList(likers: postState.likers)
-                    : _selectedTab == 1
-                        ? _CommentsList(
-                            postId: widget.postId,
-                            highlightId: widget.initialCommentId,
-                          )
-                        : _SharersList(sharers: postState.sharers),
+                child: selectedTab == 1
+                    ? _CommentsList(
+                        postId: widget.postId,
+                        highlightId: widget.initialCommentId,
+                      )
+                    : selectedTab == 2
+                        ? _SharersList(sharers: postState.sharers)
+                        : _LikersList(likers: postState.likers),
               ),
             ],
           ),
@@ -177,6 +186,10 @@ class _LikersList extends StatelessWidget {
         final user = likers[index];
         return ListTile(
           contentPadding: EdgeInsets.zero,
+          // A two-line ListTile floors itself at 72dp; these rows only hold a
+          // name and handle, so force compact mode: content height + 4dp.
+          minVerticalPadding: 4,
+          minTileHeight: 52,
           leading: CircleAvatar(
             radius: 20,
             backgroundColor: gold.withAlpha(40),
@@ -211,6 +224,10 @@ class _LikersList extends StatelessWidget {
 }
 
 // ─── Comments List ─────────────────────────────────────────────
+
+/// Ordering options offered above the comments list.
+enum CommentSort { newest, popular }
+
 class _CommentsList extends ConsumerStatefulWidget {
   final String postId;
 
@@ -227,6 +244,9 @@ class _CommentsListState extends ConsumerState<_CommentsList> {
   Comment? _replyingTo;
   final _highlightKey = GlobalKey();
   bool _highlightOn = false;
+
+  /// Active ordering: newest first, or most-liked first.
+  CommentSort _sort = CommentSort.newest;
 
   @override
   void initState() {
@@ -249,6 +269,43 @@ class _CommentsListState extends ConsumerState<_CommentsList> {
 
   void _startReply(Comment comment) {
     setState(() => _replyingTo = comment);
+  }
+
+  /// Newest sorts by time; popularity sorts by like count with time as tiebreak.
+  int _compareComments(Comment a, Comment b) {
+    if (_sort == CommentSort.popular) {
+      final byLikes = b.likeCount.compareTo(a.likeCount);
+      if (byLikes != 0) return byLikes;
+    }
+    return b.timestamp.compareTo(a.timestamp);
+  }
+
+  Widget _sortChip(BuildContext context, CommentSort value, String label) {
+    final selected = _sort == value;
+    final gold = Theme.of(context).colorScheme.primary;
+    final textColor = Theme.of(context).textTheme.bodySmall?.color;
+    return InkWell(
+      onTap: () => setState(() => _sort = value),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? gold.withAlpha(35) : Colors.transparent,
+          border: Border.all(
+            color: selected ? gold : Theme.of(context).dividerColor,
+          ),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected ? gold : textColor,
+          ),
+        ),
+      ),
+    );
   }
 
   void _cancelReply() {
@@ -278,22 +335,42 @@ class _CommentsListState extends ConsumerState<_CommentsList> {
     // Top-level comments first, each followed by its one level of replies.
     // A reply to a reply attaches to the top-level ancestor so nothing is lost.
     final byId = {for (final c in list) c.id: c};
-    final roots = list.where((c) => c.replyTo == null || !byId.containsKey(c.replyTo)).toList();
+    final roots = list.where((c) => c.replyTo == null || !byId.containsKey(c.replyTo)).toList()
+      ..sort(_compareComments);
     final entries = <(Comment, bool)>[];
     for (final root in roots) {
       entries.add((root, false));
+      final replies = <Comment>[];
       for (final c in list) {
         var parentId = c.replyTo;
         if (parentId == null) continue;
         while (byId[parentId]?.replyTo != null) {
           parentId = byId[parentId]!.replyTo!;
         }
-        if (parentId == root.id) entries.add((c, true));
+        if (parentId == root.id) replies.add(c);
+      }
+      replies.sort(_compareComments);
+      for (final reply in replies) {
+        entries.add((reply, true));
       }
     }
 
     return Column(
       children: [
+        // ── Sort control ──
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Row(
+            children: [
+              Text('Sort by', style: Theme.of(context).textTheme.bodySmall),
+              const Spacer(),
+              _sortChip(context, CommentSort.newest, 'Newest'),
+              const SizedBox(width: 6),
+              _sortChip(context, CommentSort.popular, 'Popular'),
+            ],
+          ),
+        ),
+
         // ── Comments list ──
         Expanded(
           child: ListView(
@@ -364,6 +441,8 @@ class _CommentTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final gold = Theme.of(context).colorScheme.primary;
     final muted = Theme.of(context).textTheme.bodySmall?.color;
+    // Comments on a private post can't be shared out either.
+    final canShare = ref.watch(postStateProvider)[postId]?.visibility == PostVisibility.public;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -395,15 +474,28 @@ class _CommentTile extends ConsumerWidget {
               children: [
                 Row(
                   children: [
-                    Text(comment.user.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    // Both texts shrink with ellipsis so narrow phones never overflow.
+                    Flexible(
+                      child: Text(
+                        comment.user.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                    ),
                     if (comment.user.verified) ...[
                       const SizedBox(width: 3),
                       Icon(Icons.verified, size: 12, color: gold),
                     ],
                     const SizedBox(width: 6),
-                    Text(comment.user.handle, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11)),
-                    const SizedBox(width: 5),
-                    Text('· ${compactAgo(comment.timestamp)}', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11)),
+                    Flexible(
+                      child: Text(
+                        '${comment.user.handle} · ${compactAgo(comment.timestamp)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -475,16 +567,17 @@ class _CommentTile extends ConsumerWidget {
                 child: Icon(Icons.reply, size: 16, color: muted),
               ),
               const SizedBox(width: 12),
-              GestureDetector(
-                onTap: () {
-                  ShareSheet.show(
-                    context,
-                    shareText: commentShareText(postId, comment.id, comment.user.handle, comment.text),
-                    onShared: () => ref.read(postStateProvider.notifier).share(postId),
-                  );
-                },
-                child: Icon(Icons.share_outlined, size: 15, color: muted),
-              ),
+              if (canShare)
+                GestureDetector(
+                  onTap: () {
+                    ShareSheet.show(
+                      context,
+                      shareText: commentShareText(postId, comment.id, comment.user.handle, comment.text),
+                      onShared: () => ref.read(postStateProvider.notifier).share(postId),
+                    );
+                  },
+                  child: Icon(Icons.share_outlined, size: 15, color: muted),
+                ),
             ],
           ),
         ],
@@ -571,7 +664,7 @@ class _CommentInputState extends ConsumerState<_CommentInput> {
     ref.read(postStateProvider.notifier).addComment(
       widget.postId,
       text,
-      const PostUser(name: 'Youssef', handle: '@youssef_ma', verified: true),
+      const PostUser(name: 'Phaylali', handle: '@phaylali', verified: true),
       imagePath: imagePath,
       imageBytes: imageBytes,
       replyTo: widget.replyingTo?.id,
@@ -752,6 +845,10 @@ class _SharersList extends StatelessWidget {
         final user = sharers[index];
         return ListTile(
           contentPadding: EdgeInsets.zero,
+          // A two-line ListTile floors itself at 72dp; these rows only hold a
+          // name and handle, so force compact mode: content height + 4dp.
+          minVerticalPadding: 4,
+          minTileHeight: 52,
           leading: CircleAvatar(
             radius: 20,
             backgroundColor: gold.withAlpha(40),
@@ -808,7 +905,13 @@ class ProfileViewScreen extends StatelessWidget {
               style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: gold),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
+          // Placeholder progression — real XP lands with activity tracking.
+          XpBar(
+            xp: Rank.placeholderXpFor(user.handle),
+            handle: user.handle,
+          ),
+          const SizedBox(height: 14),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -831,13 +934,7 @@ class ProfileViewScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 20),
-          Center(
-            child: OmniFilledButton(
-              label: 'Follow',
-              icon: Icons.person_add_outlined,
-              onPressed: () {},
-            ),
-          ),
+          _ProfileActions(user: user),
         ],
       ),
     );
@@ -852,6 +949,57 @@ class ProfileViewScreen extends StatelessWidget {
           Text(label, style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
+    );
+  }
+}
+
+/// The two actions on someone else's profile:
+/// "Get acquainted" sends a friend request, "Keep up" follows them.
+///
+/// Both rebuild straight from [RelationshipService]'s notifiers, and the same
+/// following set feeds the scrolls "Keep up" tab.
+class _ProfileActions extends StatelessWidget {
+  final PostUser user;
+
+  const _ProfileActions({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    final service = RelationshipService.instance;
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: service.requests,
+      builder: (context, requests, _) {
+        final requested = requests.contains(user.handle);
+        return ValueListenableBuilder<Set<String>>(
+          valueListenable: service.following,
+          builder: (context, following, _) {
+            final isFollowing = following.contains(user.handle);
+            return Row(
+              children: [
+                Expanded(
+                  child: OmniOutlinedButton(
+                    label: requested ? 'Request sent' : 'Get acquainted',
+                    icon: requested ? Icons.check : Icons.person_add_alt_outlined,
+                    // Half-width buttons: M3's 24dp side padding leaves no
+                    // room for the label, so it used to overflow.
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    onPressed: () => service.toggleRequest(user.handle),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OmniFilledButton(
+                    label: isFollowing ? 'Keeping up' : 'Keep up',
+                    icon: isFollowing ? Icons.check : Icons.person_add_outlined,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    onPressed: () => service.toggleFollow(user.handle),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

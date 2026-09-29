@@ -10,6 +10,10 @@ import 'services/audio_player_service.dart';
 import 'services/date_cache.dart';
 import 'services/date_service.dart';
 import 'services/deep_link_service.dart';
+import 'services/interests_service.dart';
+import 'services/mute_service.dart';
+import 'services/relationship_service.dart';
+import 'services/xp_service.dart';
 import 'widgets/widgets.dart';
 import 'screens/scrolls_screen.dart';
 import 'screens/tools_screen.dart';
@@ -24,6 +28,11 @@ void main() async {
   usePathUrlStrategy();
   MediaKit.ensureInitialized();
   await ApiConfig.load();
+  // XP total + today's login bonus, before the profile bar first paints.
+  await XpService.instance.init();
+  // Follows / friend requests + interest topics, before their tabs first paint.
+  await RelationshipService.instance.init();
+  await InterestsService.instance.init();
   // Start media session + load persisted player settings before first frame
   // so the Android notification is ready as soon as playback begins.
   final audio = AudioPlayerService.instance;
@@ -213,15 +222,62 @@ class FeedScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 80),
-      itemCount: dummyPosts.length + 1,
-      itemBuilder: (context, index) {
-        if (index == 0) return const StoriesRow();
-        return _buildPost(dummyPosts[index - 1]);
+    // Muted or blocked accounts drop out of the feed until they're restored.
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: MuteService.instance.muted,
+      builder: (context, muted, _) {
+        final posts = [
+          for (final post in dummyPosts)
+            if (!muted.contains(post.user.handle)) post,
+        ];
+        if (posts.isEmpty) return _everythingHidden(context);
+
+        return ListView.builder(
+          padding: const EdgeInsets.only(bottom: 80),
+          itemCount: posts.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) return const StoriesRow();
+            return _buildPost(posts[index - 1]);
+          },
+        );
       },
     );
   }
+}
+
+/// Feed empty state once every author got muted — the way back out.
+Widget _everythingHidden(BuildContext context) {
+  final gold = Theme.of(context).colorScheme.primary;
+  return Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.volume_off_outlined, size: 44, color: gold),
+          const SizedBox(height: 14),
+          const Text(
+            'Everyone is hidden',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'You muted or blocked every account that posted.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Theme.of(context).textTheme.bodySmall?.color),
+          ),
+          const SizedBox(height: 18),
+          OmniFilledButton(
+            label: 'Unmute everyone',
+            icon: Icons.volume_up_outlined,
+            fullWidth: false,
+            onPressed: () => MuteService.instance.unmuteAll(),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 // ─── Explore Screen ────────────────────────────────────────────
@@ -289,11 +345,21 @@ class ExploreScreen extends StatelessWidget {
             child: Text('TRENDING', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 12)),
           ),
         ),
-        SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, index) => _buildPost(dummyPosts[index % dummyPosts.length]),
-            childCount: 5,
-          ),
+        ValueListenableBuilder<Set<String>>(
+          valueListenable: MuteService.instance.muted,
+          builder: (context, muted, _) {
+            final visible = [
+              for (final post in dummyPosts)
+                if (!muted.contains(post.user.handle)) post,
+            ];
+            if (visible.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+            return SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildPost(visible[index % visible.length]),
+                childCount: 5,
+              ),
+            );
+          },
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 80)),
       ],
@@ -308,7 +374,7 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final gold = Theme.of(context).colorScheme.primary;
-    final userPosts = dummyPosts.where((p) => p.user.handle == '@youssef_ma').toList();
+    final userPosts = dummyPosts.where((p) => p.user.handle == currentUser.handle).toList();
 
     return CustomScrollView(
       slivers: [
@@ -322,7 +388,7 @@ class ProfileScreen extends StatelessWidget {
                     CircleAvatar(
                       radius: 44,
                       backgroundColor: gold.withAlpha(40),
-                      child: Text('Y', style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: gold)),
+                      child: Text(currentUser.name[0].toUpperCase(), style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: gold)),
                     ),
                     Positioned(
                       right: 0,
@@ -340,17 +406,19 @@ class ProfileScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
+                const XpBar(),
+                const SizedBox(height: 14),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text('Youssef', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                    Text(currentUser.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
                     const SizedBox(width: 4),
                     Icon(Icons.verified, size: 20, color: gold),
                   ],
                 ),
                 const SizedBox(height: 2),
-                Text('@youssef_ma', style: Theme.of(context).textTheme.bodySmall),
+                Text(currentUser.handle, style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 8),
                 Text(
                   'Casablanca, Morocco\nTracking every movie, game, book, and anime.',
@@ -438,6 +506,9 @@ class _NotificationsDrawerState extends State<NotificationsDrawer> {
   TripleDate? _dates;
   bool _refreshing = false;
 
+  /// 0 = notifications from people, 1 = what the system sent.
+  int _notifTab = 0;
+
   @override
   void initState() {
     super.initState();
@@ -473,15 +544,24 @@ class _NotificationsDrawerState extends State<NotificationsDrawer> {
     final gold = Theme.of(context).colorScheme.primary;
     final cs = Theme.of(context).colorScheme;
 
-    final notifications = [
+    // Timestamps are the ones they shipped with — splitting them into two
+    // tabs moves nothing around.
+    final social = [
       ('Ahmed liked your post', '2m ago', Icons.favorite, Colors.red),
       ('Sara commented on your post', '15m ago', Icons.chat_bubble, gold),
       ('Youssef started following you', '1h ago', Icons.person_add, Colors.blue),
-      ('New post from Movie Club', '3h ago', Icons.movie, gold),
       ('Your workout was shared!', '5h ago', Icons.share, Colors.green),
-      ('Book recommendation for you', '1d ago', Icons.book, gold),
       ('Ahmed liked your photo', '2d ago', Icons.favorite, Colors.red),
     ];
+
+    final system = [
+      ('New post from Movie Club', '3h ago', Icons.movie, gold),
+      ('Book recommendation for you', '1d ago', Icons.book, gold),
+      ('Your weekly XP summary is ready', '4d ago', Icons.emoji_events, gold),
+      ('Welcome to Omniversify', '5d ago', Icons.auto_awesome, gold),
+    ];
+
+    final notifications = _notifTab == 0 ? social : system;
 
     return Drawer(
       child: SafeArea(
@@ -508,6 +588,13 @@ class _NotificationsDrawerState extends State<NotificationsDrawer> {
             const Divider(height: 1),
             _DatesColumn(dates: _dates, gold: gold),
             const Divider(height: 1),
+            // The dates block stays exactly where it was — the tabs slot in
+            // below it, between it and the list.
+            _DrawerTabs(
+              labels: const ['Social', 'System'],
+              index: _notifTab,
+              onSelect: (index) => setState(() => _notifTab = index),
+            ),
             Expanded(
               child: ListView.builder(
                 padding: EdgeInsets.zero,
@@ -530,6 +617,66 @@ class _NotificationsDrawerState extends State<NotificationsDrawer> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Two plain bold labels with a gold underline on the active one — the same
+/// tab treatment the scrolls screen uses, reused by both drawers.
+class _DrawerTabs extends StatelessWidget {
+  const _DrawerTabs({
+    required this.labels,
+    required this.index,
+    required this.onSelect,
+  });
+
+  final List<String> labels;
+  final int index;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final gold = Theme.of(context).colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            for (var i = 0; i < labels.length; i++)
+              Expanded(
+                child: InkWell(
+                  onTap: () => onSelect(i),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+                    child: Column(
+                      children: [
+                        Text(
+                          labels[i],
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                            color: i == index ? gold : cs.onSurface.withAlpha(140),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 2.5,
+                          decoration: BoxDecoration(
+                            color: i == index ? gold : Colors.transparent,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        Divider(height: 1, color: gold.withAlpha(60)),
+      ],
     );
   }
 }
@@ -646,12 +793,36 @@ class _DatesColumn extends StatelessWidget {
 }
 
 // ─── DMs Drawer (right) ──────────────────────────────────────
-class DmsDrawer extends StatelessWidget {
+class DmsDrawer extends StatefulWidget {
   const DmsDrawer({super.key});
+
+  @override
+  State<DmsDrawer> createState() => _DmsDrawerState();
+}
+
+class _DmsDrawerState extends State<DmsDrawer> {
+  /// 0 = message threads, 1 = the people you're acquainted with.
+  int _tab = 0;
+
+  /// Placeholder acquaintances — real ones take over once get-acquainted
+  /// requests can be accepted.
+  static const _acquaintances = [
+    ('Amina', '@amina_stream', 'Acquainted · 12 mutuals'),
+    ('Omar', '@omar_gamer', 'Acquainted · 5 mutuals'),
+    ('Fatima', '@fatima_art', 'Acquainted · 3 mutuals'),
+    ('Karim', '@karim_w', 'Acquainted · 2 mutuals'),
+  ];
+
+  /// First letter of a handle, without the `@`.
+  static String _initial(String handle) {
+    final clean = handle.replaceFirst('@', '');
+    return clean.isEmpty ? '?' : clean.substring(0, 1).toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
     final gold = Theme.of(context).colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
 
     final conversations = [
       ('Ahmed', '@ahmed_m', 'Sure, let\'s watch it together!', '2m', false),
@@ -671,49 +842,147 @@ class DmsDrawer extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Row(
                 children: [
-                  Icon(Icons.chat_outlined, color: gold, size: 22),
+                  Icon(
+                    _tab == 0 ? Icons.chat_outlined : Icons.people_outline,
+                    color: gold,
+                    size: 22,
+                  ),
                   const SizedBox(width: 8),
-                  Text('Messages', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(
+                    _tab == 0 ? 'Messages' : 'Acquaintances',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  ),
                 ],
               ),
             ),
             const Divider(height: 1),
+            _DrawerTabs(
+              labels: const ['Messages', 'Acquaintances'],
+              index: _tab,
+              onSelect: (index) => setState(() => _tab = index),
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: OmniversifyTextField(
-                hint: 'Search messages...',
+                hint: _tab == 0 ? 'Search messages...' : 'Search acquaintances...',
                 prefixIcon: const Icon(Icons.search, size: 18),
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: conversations.length,
-                itemBuilder: (context, index) {
-                  final (name, handle, lastMsg, time, unread) = conversations[index];
-                  return ListTile(
-                    leading: CircleAvatar(
-                      radius: 20,
-                      backgroundColor: gold.withAlpha(30),
-                      child: Text(name[0], style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 14)),
-                    ),
-                    title: Row(
-                      children: [
-                        Expanded(
-                          child: Text(name, style: TextStyle(fontSize: 14, fontWeight: unread ? FontWeight.w700 : FontWeight.w500)),
-                        ),
-                        Text(time, style: TextStyle(fontSize: 11, color: unread ? gold : Theme.of(context).textTheme.bodySmall?.color)),
-                      ],
-                    ),
-                    subtitle: Text(lastMsg, style: TextStyle(fontSize: 12, color: unread ? Theme.of(context).textTheme.bodyMedium?.color : Theme.of(context).textTheme.bodySmall?.color), maxLines: 1, overflow: TextOverflow.ellipsis),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  );
-                },
-              ),
+              child: _tab == 0
+                  ? ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: conversations.length,
+                      itemBuilder: (context, index) {
+                        final (name, handle, lastMsg, time, unread) = conversations[index];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            radius: 20,
+                            backgroundColor: gold.withAlpha(30),
+                            child: Text(name[0], style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 14)),
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(name, style: TextStyle(fontSize: 14, fontWeight: unread ? FontWeight.w700 : FontWeight.w500)),
+                              ),
+                              Text(time, style: TextStyle(fontSize: 11, color: unread ? gold : Theme.of(context).textTheme.bodySmall?.color)),
+                            ],
+                          ),
+                          subtitle: Text(lastMsg, style: TextStyle(fontSize: 12, color: unread ? Theme.of(context).textTheme.bodyMedium?.color : Theme.of(context).textTheme.bodySmall?.color), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        );
+                      },
+                    )
+                  : _acquaintancesList(context, gold, cs),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// Requests still in flight, then the people already acquainted.
+  Widget _acquaintancesList(BuildContext context, Color gold, ColorScheme cs) {
+    Widget sectionLabel(String text) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 10,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.w800,
+              color: cs.onSurface.withAlpha(150),
+            ),
+          ),
+        );
+
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        ValueListenableBuilder<Set<String>>(
+          valueListenable: RelationshipService.instance.requests,
+          builder: (context, requests, _) {
+            if (requests.isEmpty) return const SizedBox.shrink();
+            final pending = requests.toList()..sort();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                sectionLabel('REQUESTS'),
+                for (final handle in pending)
+                  ListTile(
+                    leading: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: gold.withAlpha(30),
+                      child: Text(
+                        _initial(handle),
+                        style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ),
+                    title: Text(handle, style: const TextStyle(fontSize: 14)),
+                    subtitle: Text(
+                      'Request sent',
+                      style: TextStyle(fontSize: 12, color: gold),
+                    ),
+                    trailing: IconButton(
+                      icon: Icon(Icons.close, size: 18, color: cs.onSurface.withAlpha(150)),
+                      tooltip: 'Withdraw request',
+                      onPressed: () {
+                        RelationshipService.instance.toggleRequest(handle);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Request to $handle withdrawn'),
+                            duration: const Duration(seconds: 2),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  ),
+              ],
+            );
+          },
+        ),
+        sectionLabel('ACQUAINTED'),
+        for (final (name, handle, note) in _acquaintances)
+          ListTile(
+            leading: CircleAvatar(
+              radius: 20,
+              backgroundColor: gold.withAlpha(30),
+              child: Text(name[0], style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 14)),
+            ),
+            title: Row(
+              children: [
+                Expanded(child: Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))),
+                Text(handle, style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(150))),
+              ],
+            ),
+            subtitle: Text(note, style: TextStyle(fontSize: 12, color: cs.onSurface.withAlpha(150))),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 }

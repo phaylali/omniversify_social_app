@@ -1,5 +1,8 @@
 enum PostType { text, image, movie, tvShow, game, book, anime, location, workout, video }
 
+/// Who can see a post. Private posts never expose share actions.
+enum PostVisibility { public, private }
+
 class PostUser {
   final String name;
   final String handle;
@@ -142,6 +145,9 @@ class Post {
   final int comments;
   final int shares;
   final bool liked;
+
+  /// Audience for this post — private posts disable every share entry point.
+  final PostVisibility visibility;
   final MediaMetadata? movieData;
   final MediaMetadata? tvShowData;
   final MediaMetadata? animeData;
@@ -162,6 +168,7 @@ class Post {
     this.comments = 0,
     this.shares = 0,
     this.liked = false,
+    this.visibility = PostVisibility.public,
     this.movieData,
     this.tvShowData,
     this.animeData,

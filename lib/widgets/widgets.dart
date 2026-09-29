@@ -9,3 +9,4 @@ export 'video_post.dart';
 export 'link_preview_widget.dart';
 export 'stories_row.dart';
 export 'share_sheet.dart';
+export 'xp_bar.dart';
