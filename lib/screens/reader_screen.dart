@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/activity_service.dart';
 import '../services/book_loader.dart';
@@ -15,6 +16,7 @@ import '../services/local_books.dart';
 import '../services/privacy_service.dart';
 import '../services/reader_library.dart';
 import '../widgets/action_sheet.dart';
+import '../widgets/share_sheet.dart';
 import '../widgets/sliding_tabs.dart';
 import 'folder_picker_screen.dart';
 import 'privacy_screen.dart';
@@ -45,6 +47,32 @@ class _ReaderTab {
 
   static const all = [local, discover, library];
 }
+
+/// What the Local shelf is showing: every book, or one kind of file.
+enum _LocalFilter { all, pdf, epub, comics }
+
+extension on _LocalFilter {
+  String get label => switch (this) {
+    _LocalFilter.all => 'ALL',
+    _LocalFilter.pdf => 'PDF',
+    _LocalFilter.epub => 'EPUB',
+    _LocalFilter.comics => 'COMICS',
+  };
+
+  /// `ALL` accepts anything; the others take the formats a reader opens
+  /// straight from disk — comics are one bucket because CBZ and CBR are
+  /// the same thing wrapped twice.
+  bool accepts(FoundBook book) => switch (this) {
+    _LocalFilter.all => true,
+    _LocalFilter.pdf => book.format == BookFormat.pdf,
+    _LocalFilter.epub => book.format == BookFormat.epub,
+    _LocalFilter.comics =>
+      book.format == BookFormat.cbz || book.format == BookFormat.cbr,
+  };
+}
+
+/// How the Local shelf is ordered: A→Z, or biggest file first.
+enum _LocalSort { name, size }
 
 class _ReaderScreenState extends State<ReaderScreen>
     with TickerProviderStateMixin {
@@ -85,6 +113,12 @@ class _ReaderScreenState extends State<ReaderScreen>
   // ── Local ─────────────────────────────────────────────────────────────
   final TextEditingController _localSearchController = TextEditingController();
   String _localQuery = '';
+
+  /// Which kind of book the shelf is showing, if not all of them.
+  _LocalFilter _localFilter = _LocalFilter.all;
+
+  /// How the shelf is ordered.
+  _LocalSort _localSort = _LocalSort.name;
 
   // ── Discover ──────────────────────────────────────────────────────────
   final TextEditingController _searchController = TextEditingController();
@@ -626,9 +660,14 @@ class _ReaderScreenState extends State<ReaderScreen>
           if (service.allBooks.isNotEmpty || _localQuery.isNotEmpty) ...[
             const SizedBox(height: 16),
             _localSearchField(),
+            const SizedBox(height: 12),
+            _localControls(),
           ],
           const SizedBox(height: 24),
-          if (_localQuery.trim().isEmpty) ..._folderSections() else ..._localMatches(),
+          if (_localQuery.trim().isEmpty)
+            ..._folderSections()
+          else
+            ..._localMatches(),
           const SizedBox(height: 20),
           ..._formatBlurbs(),
           const SizedBox(height: 16),
@@ -687,22 +726,179 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
+  /// What the shelf actually renders: the search, the format filter and the
+  /// sort order applied to whichever list is on screen.
+  List<FoundBook> _localShown(Iterable<FoundBook> books) {
+    final query = _localQuery.trim().toLowerCase();
+    final shown = [
+      for (final book in books)
+        if (_localFilter.accepts(book) &&
+            (query.isEmpty ||
+                book.title.toLowerCase().contains(query) ||
+                book.path.toLowerCase().contains(query)))
+          book,
+    ];
+    shown.sort(
+      _localSort == _LocalSort.size
+          ? (a, b) {
+              // Biggest first — that's the question size sorting answers.
+              final bySize = b.sizeBytes.compareTo(a.sizeBytes);
+              return bySize != 0
+                  ? bySize
+                  : a.title.toLowerCase().compareTo(b.title.toLowerCase());
+            }
+          : (a, b) {
+              final byName = a.title
+                  .toLowerCase()
+                  .compareTo(b.title.toLowerCase());
+              return byName != 0 ? byName : a.path.compareTo(b.path);
+            },
+    );
+    return shown;
+  }
+
+  /// The filter chips and the sort toggle, sitting under the search field.
+  Widget _localControls() {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final filter in _LocalFilter.values) ...[
+                  _filterChip(filter),
+                  const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+        ),
+        Container(
+          width: 1,
+          height: 22,
+          color: cs.onSurface.withAlpha(40),
+        ),
+        _sortToggle(_LocalSort.name, 'NAME'),
+        const SizedBox(width: 4),
+        _sortToggle(_LocalSort.size, 'SIZE'),
+      ],
+    );
+  }
+
+  Widget _filterChip(_LocalFilter filter) {
+    final cs = Theme.of(context).colorScheme;
+    final gold = cs.primary;
+    final selected = _localFilter == filter;
+    return InkWell(
+      key: ValueKey('local-filter-${filter.name}'),
+      onTap: () => setState(() => _localFilter = filter),
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? gold.withAlpha(30) : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: selected ? gold : gold.withAlpha(60)),
+        ),
+        child: Text(
+          filter.label,
+          style: TextStyle(
+            fontSize: 11,
+            letterSpacing: 0.6,
+            fontWeight: FontWeight.w800,
+            color: selected ? gold : cs.onSurface.withAlpha(150),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Plain bold text with a gold underline when live — the same language the
+  /// tabs speak, so "which order am I in?" reads at a glance.
+  Widget _sortToggle(_LocalSort sort, String label) {
+    final cs = Theme.of(context).colorScheme;
+    final gold = cs.primary;
+    final active = _localSort == sort;
+    return InkWell(
+      key: ValueKey('local-sort-${sort.name}'),
+      onTap: () => setState(() => _localSort = sort),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    letterSpacing: 0.6,
+                    fontWeight: FontWeight.w800,
+                    color: active ? gold : cs.onSurface.withAlpha(140),
+                  ),
+                ),
+                if (active) ...[
+                  const SizedBox(width: 3),
+                  Icon(
+                    sort == _LocalSort.name
+                        ? Icons.arrow_upward
+                        : Icons.arrow_downward,
+                    size: 10,
+                    color: gold,
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 4),
+            Container(
+              height: 2,
+              width: 34,
+              decoration: BoxDecoration(
+                color: active ? gold : Colors.transparent,
+                borderRadius: BorderRadius.circular(1),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Hands the file to the system share dialog — the same sheet the music
+  /// player uses, so a book travels the way a song does.
+  Future<void> _shareBook(FoundBook book) async {
+    if (!File(book.path).existsSync()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('That file is no longer on this phone.')),
+      );
+      return;
+    }
+    await ShareSheet.show(
+      context,
+      shareText: book.title,
+      files: [XFile(book.path)],
+    );
+  }
+
   /// One flat list of matches — grouping by folder stops helping the moment
   /// the question is "which of my books mentions batman?".
   List<Widget> _localMatches() {
     final q = _localQuery.trim().toLowerCase();
-    final matches = [
-      for (final book in LocalBooksService.instance.allBooks)
-        if (book.title.toLowerCase().contains(q) ||
-            book.path.toLowerCase().contains(q))
-          book,
-    ];
+    final matches = _localShown(LocalBooksService.instance.allBooks);
     if (matches.isEmpty) {
+      final kind = _localFilter == _LocalFilter.all
+          ? 'local'
+          : _localFilter.label;
       return [
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 24),
           child: Text(
-            'No local books match "$q".',
+            'No $kind books match "$q".',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 13,
@@ -782,7 +978,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     final folders = service.folders.value;
 
     for (final folder in folders) {
-      final books = service.byFolder.value[folder] ?? const <FoundBook>[];
+      final raw = service.byFolder.value[folder] ?? const <FoundBook>[];
+      final books = _localShown(raw);
       final name = folder.split('/').last;
       rows.add(
         _sectionLabel(
@@ -794,7 +991,13 @@ class _ReaderScreenState extends State<ReaderScreen>
         ),
       );
       if (books.isEmpty) {
-        rows.add(_hint('No supported books in this folder yet.'));
+        rows.add(
+          _hint(
+            raw.isEmpty
+                ? 'No supported books in this folder yet.'
+                : 'No ${_localFilter.label} books in $name.',
+          ),
+        );
       }
       rows.addAll([
         for (final book in books) _bookRow(book),
@@ -802,7 +1005,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       ]);
     }
 
-    final scanned = service.scanned.value;
+    final scanned = _localShown(service.scanned.value);
     if (scanned.isNotEmpty) {
       rows.add(_sectionLabel('${scanned.length} found on this phone'));
       rows.addAll([
@@ -817,8 +1020,10 @@ class _ReaderScreenState extends State<ReaderScreen>
       rows.addAll([
         _sectionLabel('On this phone'),
         _hint(
-          'Add a folder to keep an eye on, or scan the whole phone once — '
-          'the books you already own show up right here.',
+          service.allBooks.isEmpty
+              ? 'Add a folder to keep an eye on, or scan the whole phone once — '
+                    'the books you already own show up right here.'
+              : 'No ${_localFilter.label} books here yet.',
         ),
         const SizedBox(height: 14),
       ]);
@@ -914,6 +1119,18 @@ class _ReaderScreenState extends State<ReaderScreen>
                     ),
                   ),
                 ],
+              ),
+            ),
+            IconButton(
+              key: ValueKey('local-share-${book.path}'),
+              onPressed: () => _shareBook(book),
+              tooltip: 'Share this file',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              icon: Icon(
+                Icons.share_outlined,
+                size: 17,
+                color: gold.withAlpha(160),
               ),
             ),
             if (opening)

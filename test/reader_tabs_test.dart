@@ -228,6 +228,164 @@ void main() {
       expect(find.text('batman'), findsOneWidget);
       expect(find.text('2 IN COMICS'), findsOneWidget);
     });
+
+    testWidgets('the shelf filters by format and sorts by size', (
+      tester,
+    ) async {
+      final local = LocalBooksService.instance;
+      local.folders.value = [
+        '/storage/emulated/0/Comics',
+        '/storage/emulated/0/Novels',
+      ];
+      local.byFolder.value = {
+        '/storage/emulated/0/Comics': const [
+          FoundBook(
+            path: '/storage/emulated/0/Comics/small.cbz',
+            title: 'small',
+            format: BookFormat.cbz,
+            sizeBytes: 9000000,
+          ),
+          FoundBook(
+            path: '/storage/emulated/0/Comics/big.epub',
+            title: 'big',
+            format: BookFormat.epub,
+            sizeBytes: 5000,
+          ),
+          FoundBook(
+            path: '/storage/emulated/0/Comics/notes.pdf',
+            title: 'notes',
+            format: BookFormat.pdf,
+            sizeBytes: 90000,
+          ),
+        ],
+        '/storage/emulated/0/Novels': const [
+          FoundBook(
+            path: '/storage/emulated/0/Novels/story.pdf',
+            title: 'story',
+            format: BookFormat.pdf,
+            sizeBytes: 700000,
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+
+      double yOf(String text) => tester.getTopLeft(find.text(text)).dy;
+
+      // A→Z unless told otherwise.
+      expect(yOf('big'), lessThan(yOf('notes')));
+      expect(yOf('notes'), lessThan(yOf('small')));
+
+      // Biggest file first once SIZE is picked — the order flips.
+      await tester.tap(find.byKey(const ValueKey('local-sort-size')));
+      await tester.pump();
+      expect(yOf('small'), lessThan(yOf('notes')));
+      expect(yOf('notes'), lessThan(yOf('big')));
+
+      // The chips keep one kind of book and count them in the header.
+      await tester.tap(find.byKey(const ValueKey('local-filter-epub')));
+      await tester.pump();
+      expect(find.text('big'), findsOneWidget);
+      expect(find.text('small'), findsNothing);
+      expect(find.text('notes'), findsNothing);
+      expect(find.text('1 IN COMICS'), findsOneWidget);
+      // A folder without that kind says so rather than sitting blank.
+      expect(find.text('0 IN NOVELS'), findsOneWidget);
+      expect(find.text('No EPUB books in Novels.'), findsOneWidget);
+
+      // …and so does the scan-style count when comics are asked for.
+      await tester.tap(find.byKey(const ValueKey('local-filter-comics')));
+      await tester.pump();
+      expect(find.text('big'), findsNothing);
+      expect(find.text('small'), findsOneWidget);
+      expect(find.text('No COMICS books in Novels.'), findsOneWidget);
+
+      // PDF is in both folders, so both count it.
+      await tester.tap(find.byKey(const ValueKey('local-filter-pdf')));
+      await tester.pump();
+      expect(find.text('notes'), findsOneWidget);
+      expect(find.text('story'), findsOneWidget);
+      expect(find.text('1 IN COMICS'), findsOneWidget);
+      expect(find.text('1 IN NOVELS'), findsOneWidget);
+
+      // ALL puts everything back.
+      await tester.tap(find.byKey(const ValueKey('local-filter-all')));
+      await tester.pump();
+      expect(find.text('big'), findsOneWidget);
+      expect(find.text('notes'), findsOneWidget);
+      expect(find.text('small'), findsOneWidget);
+      expect(find.text('3 IN COMICS'), findsOneWidget);
+    });
+
+    testWidgets('the share button hands the file to the system', (
+      tester,
+    ) async {
+      final dir = Directory.systemTemp.createTempSync('reader_share');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/notes.pdf')..writeAsBytesSync([1, 2, 3]);
+      final local = LocalBooksService.instance;
+      local.folders.value = [dir.path];
+      local.byFolder.value = {
+        dir.path: [
+          FoundBook(
+            path: file.path,
+            title: 'notes',
+            format: BookFormat.pdf,
+            sizeBytes: 3,
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+
+      await tester.tap(find.byKey(ValueKey('local-share-${file.path}')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // The app's own sheet, with "Other apps" leading to the system one.
+      expect(find.text('Share'), findsOneWidget);
+      expect(find.text('Other apps'), findsOneWidget);
+      // The button doesn't borrow the row's tap: no viewer opens behind it.
+      expect(find.textContaining('of 0'), findsNothing);
+
+      await tester.tapAt(const Offset(6, 6));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Other apps'), findsNothing);
+    });
+
+    testWidgets('a file that has since vanished says so instead of sharing', (
+      tester,
+    ) async {
+      final local = LocalBooksService.instance;
+      local.folders.value = ['/storage/emulated/0/Comics'];
+      local.byFolder.value = {
+        '/storage/emulated/0/Comics': const [
+          FoundBook(
+            path: '/storage/emulated/0/Comics/gone.cbz',
+            title: 'gone',
+            format: BookFormat.cbz,
+            sizeBytes: 500000,
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+
+      await tester.tap(
+        find.byKey(const ValueKey('local-share-/storage/emulated/0/Comics/gone.cbz')),
+      );
+      await tester.pump();
+
+      expect(
+        find.text('That file is no longer on this phone.'),
+        findsOneWidget,
+      );
+      expect(find.text('Other apps'), findsNothing);
+    });
   });
 
   group('library progress', () {
