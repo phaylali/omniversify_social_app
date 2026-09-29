@@ -1,0 +1,444 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:omniversify_social_app/screens/folder_picker_screen.dart';
+import 'package:omniversify_social_app/screens/reader_screen.dart';
+import 'package:omniversify_social_app/services/discover_source.dart';
+import 'package:omniversify_social_app/services/local_books.dart';
+import 'package:omniversify_social_app/services/reader_library.dart';
+import 'package:omniversify_social_app/widgets/sliding_tabs.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'book_reader_test.dart' show buildZip;
+
+/// The reader's three tabs — Local, Discover, Library — the sliding underline
+/// they share with the rest of the app, and the Library's promise: a bar for
+/// how far you got, and a tap that lands on exactly that page.
+void main() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await ReaderLibrary.instance.clear();
+    final local = LocalBooksService.instance;
+    local.folders.value = [];
+    local.byFolder.value = {};
+    local.scanned.value = [];
+    local.notice.value = null;
+    local.busy.value = false;
+  });
+
+  group('sliding tabs', () {
+    testWidgets('labels report taps and only the active one turns gold', (
+      tester,
+    ) async {
+      var selected = -1;
+      var active = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) => SlidingTabs(
+                labels: const ['Local', 'Discover', 'Library'],
+                index: active,
+                onSelect: (index) {
+                  setState(() => active = index);
+                  selected = index;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Local'), findsOneWidget);
+      expect(find.text('Discover'), findsOneWidget);
+      expect(find.text('Library'), findsOneWidget);
+
+      final lit = tester.widget<Text>(find.text('Local'));
+      final dim = tester.widget<Text>(find.text('Library'));
+      expect(lit.style!.color!.a, greaterThan(dim.style!.color!.a));
+
+      await tester.tap(find.text('Library'));
+      await tester.pump();
+      expect(selected, 2);
+      final nowLit = tester.widget<Text>(find.text('Library'));
+      expect(nowLit.style!.color!.a, greaterThan(dim.style!.color!.a));
+
+      // The one already active does nothing rather than re-selecting itself.
+      selected = -1;
+      await tester.tap(find.text('Library'));
+      await tester.pump();
+      expect(selected, -1);
+    });
+
+    testWidgets('the underline glides to the new label over 300ms', (
+      tester,
+    ) async {
+      var selected = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) => SlidingTabs(
+                labels: const ['Local', 'Discover', 'Library'],
+                index: selected,
+                onSelect: (index) => setState(() => selected = index),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final underline = find.byKey(const ValueKey('sliding-tabs-underline'));
+      final startX = tester.getTopLeft(underline).dx;
+      expect(startX, 0);
+
+      await tester.tap(find.text('Discover'));
+      await tester.pump(); // the frame that starts the glide
+      await tester.pump(const Duration(milliseconds: 100)); // mid-glide
+      final movingX = tester.getTopLeft(underline).dx;
+      expect(movingX, greaterThan(0));
+      expect(
+        movingX,
+        lessThan(tester.getSize(find.byType(SlidingTabs)).width / 3),
+      );
+
+      await tester.pump(const Duration(milliseconds: 400));
+      final endX = tester.getTopLeft(underline).dx;
+      expect(
+        endX,
+        closeTo(tester.getSize(find.byType(SlidingTabs)).width / 3, 1),
+      );
+    });
+  });
+
+  group('reader tabs', () {
+    testWidgets(
+      'opens on Local with a book button and the two folder ways in',
+      (tester) async {
+        await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+        await tester.pump();
+
+        expect(find.text('Local'), findsOneWidget);
+        expect(find.text('Discover'), findsOneWidget);
+        expect(find.text('Library'), findsOneWidget);
+        expect(find.text('Open a book'), findsOneWidget);
+        expect(find.text('Add a folder'), findsOneWidget);
+        expect(find.text('Scan this phone'), findsOneWidget);
+
+        // Nothing is open yet, so the viewer isn't on screen.
+        expect(find.textContaining('of 0'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Discover searches the Archive without a network call until asked',
+      (tester) async {
+        await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+        await tester.pump();
+
+        await tester.tap(find.text('Discover'));
+        await tester.pump(const Duration(milliseconds: 400));
+
+        expect(find.text('Internet Archive'), findsOneWidget);
+        expect(find.textContaining('ADD SOURCE'), findsOneWidget);
+        expect(find.byType(TextField), findsOneWidget);
+        expect(find.textContaining('free, open, no sign-in'), findsOneWidget);
+      },
+    );
+
+    testWidgets('Library starts empty and explains where books come from', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+
+      await tester.tap(find.text('Library'));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Nothing here yet'), findsOneWidget);
+      expect(
+        find.textContaining('with a bar for how far you got'),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('library progress', () {
+    test('remembers the page, the shelf order and where it resumes', () async {
+      final lib = ReaderLibrary.instance;
+
+      await lib.record(
+        path: '/books/absolute_batman.cbr',
+        title: 'Absolute Batman',
+        format: 'cbr',
+        page: 4,
+        pages: 20,
+      );
+      await lib.record(
+        path: '/books/moby_dick.epub',
+        title: 'Moby Dick',
+        format: 'epub',
+        page: 1,
+        pages: 222,
+      );
+
+      final entry = lib.find('/books/absolute_batman.cbr')!;
+      expect(entry.label, '4/20');
+      expect(entry.progress, closeTo(0.2, 0.0001));
+      expect(entry.resumeIndex, 3);
+      expect(entry.source, 'local');
+      expect(lib.entries.value.first.title, 'Moby Dick'); // newest first
+
+      // Turning back to the same book moves it up and keeps the counts.
+      await lib.record(
+        path: '/books/absolute_batman.cbr',
+        title: 'Absolute Batman',
+        format: 'cbr',
+        page: 5,
+        pages: 20,
+      );
+      expect(lib.entries.value.first.path, '/books/absolute_batman.cbr');
+      expect(lib.find('/books/absolute_batman.cbr')!.label, '5/20');
+      expect(lib.entries.value, hasLength(2));
+
+      await lib.remove('/books/absolute_batman.cbr');
+      expect(lib.find('/books/absolute_batman.cbr'), isNull);
+      expect(lib.entries.value, hasLength(1));
+    });
+
+    test(
+      'round-trips through preferences so a restart keeps the shelf',
+      () async {
+        final lib = ReaderLibrary.instance;
+        await lib.record(
+          path: '/books/kraven.cbz',
+          title: 'Kraven',
+          format: 'cbz',
+          page: 7,
+          pages: 30,
+          source: 'discover',
+        );
+
+        final prefs = await SharedPreferences.getInstance();
+        final stored = prefs.getString('reader_library_v1');
+        expect(stored, isNotNull);
+
+        final decoded = LibraryEntry.fromJson(
+          (jsonDecode(stored!) as List).first as Map<String, Object?>,
+        );
+        expect(decoded.path, '/books/kraven.cbz');
+        expect(decoded.label, '7/30');
+        expect(decoded.resumeIndex, 6);
+        expect(decoded.source, 'discover');
+        expect(decoded.toJson(), decoded.toJson());
+      },
+    );
+
+    test('keeps the shelf to one screenful of rows', () async {
+      final lib = ReaderLibrary.instance;
+      for (var i = 0; i < 40; i++) {
+        await lib.record(
+          path: '/books/book$i.cbz',
+          title: 'Book $i',
+          format: 'cbz',
+          page: i + 1,
+          pages: 100,
+        );
+      }
+      expect(lib.entries.value, hasLength(30));
+      expect(lib.entries.value.first.path, '/books/book39.cbz');
+    });
+  });
+
+  group('discover source', () {
+    test('turns an Archive search response into cover cards', () {
+      const body = '''
+{"response":{"numFound":3,"docs":[
+  {"identifier":"batman150","title":"Batman 1940 (1-50)","year":1940,"downloads":107345},
+  {"identifier":"killing-joke","title":["Batman: The Killing Joke Graphic Novel"]},
+  {"title":"no identifier here"}
+]}}''';
+      final items = InternetArchiveSource.parseSearch(body);
+      expect(items, hasLength(2));
+      expect(items.first.title, 'Batman 1940 (1-50)');
+      expect(
+        items.first.coverUrl,
+        'https://archive.org/services/img/batman150',
+      );
+      expect(items.first.meta, '1940');
+      expect(items[1].title, 'Batman: The Killing Joke Graphic Novel');
+      expect(items[1].meta, isEmpty);
+    });
+
+    test(
+      'asks for titles that are documents, so loose photo dumps stay out',
+      () {
+        final query = InternetArchiveSource.searchQuery('absolute batman');
+        expect(query, contains('title:(absolute batman)'));
+        expect(query, contains('mediatype:(texts)'));
+      },
+    );
+
+    test('prefers the comic archive over the PDF and the OCR text', () {
+      const body = '''
+{"server":"ia801900.us.archive.org","dir":"/35/items/batman150","files":[
+  {"name":"Batman 001_djvu.txt","format":"DjVuTXT","size":"819"},
+  {"name":"Batman 001.epub","format":"EPUB","size":"4300000"},
+  {"name":"Batman 001.pdf","format":"Text PDF","size":"1500000"},
+  {"name":"Batman 001.cbr","format":"Comic Book RAR","size":"8100000"}
+]}''';
+      final file = InternetArchiveSource.pickFile(body, 'batman150')!;
+      expect(file.extension, 'cbr');
+      expect(file.sizeBytes, 8100000);
+      expect(
+        file.url,
+        'https://ia801900.us.archive.org/35/items/batman150/Batman%20001.cbr',
+      );
+    });
+
+    test('keeps the folders a book ships in when building its URL', () {
+      const body = '''
+{"server":"ia903103.us.archive.org","dir":"/27/items/dk3","files":[
+  {"name":"Batman The Dark Knight Returns/Batman 03.cbr","format":"Comic Book RAR","size":"60100000"}
+]}''';
+      final file = InternetArchiveSource.pickFile(body, 'dk3')!;
+      expect(
+        file.url,
+        'https://ia903103.us.archive.org/27/items/dk3/'
+        'Batman%20The%20Dark%20Knight%20Returns/Batman%2003.cbr',
+      );
+      expect(file.name, 'Batman 03.cbr');
+    });
+
+    test('says nothing when an item holds no format we can read', () {
+      const body = '''
+{"server":"ia1","dir":"/1/items/x","files":[
+  {"name":"x_djvu.txt","format":"DjVuTXT","size":"10"},
+  {"name":"x_meta.xml","format":"Metadata","size":"1237"}
+]}''';
+      expect(InternetArchiveSource.pickFile(body, 'x'), isNull);
+      expect(InternetArchiveSource.pickFile('[]', 'x'), isNull);
+    });
+
+    test('falls back to the plain download URL without a node', () {
+      const body = '''
+{"files":[{"name":"kraven2.cbz","format":"Zip","size":"500000"}]}''';
+      final file = InternetArchiveSource.pickFile(body, 'kraven-2')!;
+      expect(file.url, 'https://archive.org/download/kraven-2/kraven2.cbz');
+      expect(file.extension, 'cbz');
+    });
+  });
+
+  group('local folders', () {
+    test('a scan starts from a single root, never two for one disk', () async {
+      final roots = await LocalBooksService.phoneRoots();
+      expect(roots.length, lessThanOrEqualTo(1));
+    });
+
+    test('a scan walks into sub-folders instead of stopping at the top', () {
+      final root = Directory.systemTemp.createTempSync('reader_folders');
+      addTearDown(() => root.deleteSync(recursive: true));
+      Directory('${root.path}/Comics/DC').createSync(recursive: true);
+      Directory('${root.path}/Novels').createSync(recursive: true);
+      File('${root.path}/Comics/DC/batman.cbz').writeAsBytesSync([1, 2, 3]);
+      File('${root.path}/Novels/moby_dick.epub').writeAsBytesSync([1, 2, 3]);
+      File('${root.path}/readme.txt').writeAsBytesSync([1, 2, 3]);
+
+      final books = LocalBooksService.findBooks(root.path);
+
+      expect(
+        books.map((book) => book.title),
+        containsAll(['batman', 'moby_dick']),
+      );
+      expect(books.map((book) => book.title), isNot(contains('readme')));
+      expect(books.first.size, isNotEmpty);
+    });
+
+    testWidgets('the folder browser lists the folders it can see', (
+      tester,
+    ) async {
+      final root = Directory.systemTemp.createTempSync('reader_picker');
+      addTearDown(() => root.deleteSync(recursive: true));
+      Directory('${root.path}/Comics').createSync(recursive: true);
+      Directory('${root.path}/Novels').createSync(recursive: true);
+      File('${root.path}/cover.png').createSync();
+
+      await tester.pumpWidget(
+        MaterialApp(home: FolderPickerScreen(startPath: root.path)),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // Folders only — loose files aren't things you can add.
+      expect(find.text('Comics'), findsOneWidget);
+      expect(find.text('Novels'), findsOneWidget);
+      expect(find.text('cover.png'), findsNothing);
+      expect(find.text('Add this folder'), findsOneWidget);
+
+      await tester.tap(find.text('Comics'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Comics'), findsOneWidget); // now the title bar
+      expect(find.text('No folders inside.'), findsOneWidget);
+    });
+  });
+
+  group('library row', () {
+    testWidgets('shows 4/20 style progress and resumes on exactly that page', (
+      tester,
+    ) async {
+      // A real six-page comic on disk, left at page 4.
+      final dir = Directory.systemTemp.createTempSync('reader_tabs');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/six_pages.cbz');
+      file.writeAsBytesSync(
+        buildZip({
+          for (var i = 1; i <= 6; i++) 'page$i.png': [i],
+        }),
+      );
+
+      await ReaderLibrary.instance.record(
+        path: file.path,
+        title: 'Six Pages',
+        format: 'cbz',
+        page: 4,
+        pages: 6,
+      );
+
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+
+      await tester.tap(find.text('Library'));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Six Pages'), findsOneWidget);
+      expect(find.text('4/6'), findsOneWidget);
+      final bar = tester.widget<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator),
+      );
+      expect(bar.value, closeTo(4 / 6, 0.0001));
+
+      // Opening reads a real file, which the fake clock can't complete —
+      // run the tap in a real-async window, then let the viewer render.
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Six Pages'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+
+      expect(find.text('Page 4 of 6'), findsOneWidget);
+      expect(find.text('Six Pages'), findsOneWidget);
+
+      // Let the page counter's save land, then close everything cleanly.
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    });
+  });
+}

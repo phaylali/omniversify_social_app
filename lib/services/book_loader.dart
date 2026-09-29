@@ -127,28 +127,36 @@ abstract final class BookLoader {
   }
 
   /// Reads [bytes] as the book [path] claims to be.
-  static Future<BookDocument> open(Uint8List bytes, String path) async {
+  ///
+  /// [title] overrides the name taken from [path] — the Library calls with
+  /// the title it already showed on the shelf, so a resume doesn't rename
+  /// the book back to its file name.
+  static Future<BookDocument> open(
+    Uint8List bytes,
+    String path, {
+    String? title,
+  }) async {
     final format = formatOf(path);
     if (format == null) {
       throw const BookOpenException(
         'That file type isn\'t supported — try a PDF, EPUB, CBZ or CBR.',
       );
     }
-    final title = titleOf(path);
+    final name = title ?? titleOf(path);
 
     switch (format) {
       case BookFormat.pdf:
         try {
           final pdf = await PdfDocument.openData(bytes);
-          return BookDocument(title: title, format: format, pdf: pdf);
+          return BookDocument(title: name, format: format, pdf: pdf);
         } catch (_) {
-          throw BookOpenException('"$title" couldn\'t be opened as a PDF.');
+          throw BookOpenException('"$name" couldn\'t be opened as a PDF.');
         }
       case BookFormat.cbz:
       case BookFormat.cbr:
-        return _openComic(bytes, format, title);
+        return _openComic(bytes, format, name);
       case BookFormat.epub:
-        return _openEpub(bytes, title);
+        return _openEpub(bytes, name);
     }
   }
 
