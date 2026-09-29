@@ -6,6 +6,7 @@ import 'flashlight_screen.dart';
 import 'weather_screen.dart';
 import 'translation_screen.dart';
 import 'music_player_screen.dart';
+import 'reader_screen.dart';
 import 'tracker_screens.dart';
 
 class ToolsScreen extends StatelessWidget {
@@ -60,6 +61,9 @@ class ToolsScreen extends StatelessWidget {
       }),
       ('Player', Icons.library_music_outlined, () {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MusicPlayerScreen()));
+      }),
+      ('Reader', Icons.menu_book_outlined, () {
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReaderScreen()));
       }),
       ('Translate', Icons.translate_outlined, () {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TranslationScreen()));

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:omniversify_widget/omniversify_widget.dart';
 
 import '../models/rank.dart';
+import '../services/daily_reset.dart';
 import '../services/relationship_service.dart';
 import '../services/xp_service.dart';
 
@@ -196,6 +199,8 @@ class _ProgressTab extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
       children: [
         _summary(context, gold),
+        const SizedBox(height: 10),
+        const _CountdownCard(),
         const SizedBox(height: 18),
         Row(
           children: [
@@ -615,4 +620,96 @@ class _GuideTab extends StatelessWidget {
 
   /// The four landmark ranks: each band's first level plus the last one.
   static const List<int> _milestones = [20, 40, 60, Rank.maxLevel];
+}
+
+/// The live countdown to the daily reset, pinned to midnight UTC.
+///
+/// Ticks once a second on its own so the rest of the Tasks page never
+/// rebuilds with it, and stops ticking when the tab is disposed.
+class _CountdownCard extends StatefulWidget {
+  const _CountdownCard();
+
+  @override
+  State<_CountdownCard> createState() => _CountdownCardState();
+}
+
+class _CountdownCardState extends State<_CountdownCard> {
+  late String _left;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _left = DailyReset.format(DailyReset.remaining());
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final next = DailyReset.format(DailyReset.remaining());
+      if (next != _left && mounted) {
+        setState(() => _left = next);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final gold = cs.primary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withAlpha(
+          cs.brightness == Brightness.dark ? 40 : 25,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: gold.withAlpha(60)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.schedule_rounded, color: gold, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'DAILY RESET IN',
+                  style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 1.2,
+                    fontWeight: FontWeight.w800,
+                    color: cs.onSurface.withAlpha(150),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Tasks and the daily login roll over at ${DailyReset.label}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.3,
+                    color: cs.onSurface.withAlpha(150),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _left,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+              color: gold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniversify_widget/omniversify_widget.dart';
 
+import '../services/privacy_service.dart';
+import 'privacy_screen.dart';
+
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -127,6 +130,20 @@ class SettingsScreen extends ConsumerWidget {
             icon: Icons.feedback_outlined,
             title: 'Send Feedback',
             onTap: () {},
+          ),
+          const SizedBox(height: 16),
+          _sectionHeader(context, 'PRIVACY'),
+          ValueListenableBuilder<ShareAudience>(
+            valueListenable: PrivacyService.instance.audience,
+            builder: (context, audience, _) => _tile(
+              context,
+              icon: Icons.lock_outline,
+              title: 'Privacy',
+              subtitle: audience.blurb,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const PrivacyScreen()),
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           _sectionHeader(context, 'ABOUT'),

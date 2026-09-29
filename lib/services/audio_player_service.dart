@@ -28,7 +28,19 @@ enum MusicRepeatMode { off, one, all }
 /// All state is held here; the music player screen is a pure consumer.
 class AudioPlayerService {
   AudioPlayerService._();
-  static final AudioPlayerService instance = AudioPlayerService._();
+
+  static AudioPlayerService? _instance;
+
+  /// The shared player, started on first use.
+  static AudioPlayerService get instance =>
+      _instance ??= AudioPlayerService._();
+
+  /// The shared player if it has already started — without starting it.
+  ///
+  /// Readers that only care about what is playing (the activity strip) use
+  /// this so they never spin up the audio stack on their own, and tests
+  /// don't need a plugin for it.
+  static AudioPlayerService? get maybeInstance => _instance;
 
   static const String _kShuffle = 'music_shuffle_on';
   static const String _kRepeat = 'music_repeat_mode';

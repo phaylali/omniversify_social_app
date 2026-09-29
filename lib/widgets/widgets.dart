@@ -1,3 +1,4 @@
+export 'acquaintance_activity.dart';
 export 'post_components.dart';
 export 'text_image_posts.dart';
 export 'media_posts.dart';

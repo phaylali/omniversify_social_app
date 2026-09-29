@@ -12,6 +12,7 @@ import 'services/date_service.dart';
 import 'services/deep_link_service.dart';
 import 'services/interests_service.dart';
 import 'services/mute_service.dart';
+import 'services/privacy_service.dart';
 import 'services/relationship_service.dart';
 import 'services/xp_service.dart';
 import 'widgets/widgets.dart';
@@ -33,6 +34,8 @@ void main() async {
   // Follows / friend requests + interest topics, before their tabs first paint.
   await RelationshipService.instance.init();
   await InterestsService.instance.init();
+  // Who may see what you're reading or playing — before its tabs first paint.
+  await PrivacyService.instance.load();
   // Start media session + load persisted player settings before first frame
   // so the Android notification is ready as soon as playback begins.
   final audio = AudioPlayerService.instance;
@@ -964,6 +967,7 @@ class _DmsDrawerState extends State<DmsDrawer> {
             );
           },
         ),
+        const AcquaintanceActivity(),
         sectionLabel('ACQUAINTED'),
         for (final (name, handle, note) in _acquaintances)
           ListTile(

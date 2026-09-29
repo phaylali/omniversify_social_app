@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'daily_reset.dart';
 import '../models/rank.dart';
 
 /// XP granted by each action.
@@ -40,7 +41,7 @@ class XpService {
 
   bool _initialized = false;
 
-  /// Whether today's daily login bonus has already been stamped.
+  /// Whether today's — that is, today UTC — login bonus has been stamped.
   bool _loggedInToday = false;
 
   /// True once [recordDailyLogin] has granted today's bonus.
@@ -75,11 +76,13 @@ class XpService {
 
   /// Grants [XpActions.dailyLogin] the first time the app opens on a given
   /// calendar day. Repeat opens the same day award nothing.
+  /// Stamps today's daily login bonus, if it's due.
+  ///
+  /// The day is the **UTC** day, matching the countdown on the Tasks page:
+  /// the bonus rolls over at midnight UTC no matter where the phone is.
   Future<void> recordDailyLogin() async {
     final prefs = await SharedPreferences.getInstance();
-    final today = DateTime.now();
-    final stamp =
-        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final stamp = DailyReset.stamp();
     if (prefs.getString(_kLastLogin) == stamp) {
       _loggedInToday = true;
       return;
