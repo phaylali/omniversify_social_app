@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  audio_service looks these icons up at runtime with Resources.getIdentifier
+  ("drawable/audio_service_stop"), so R8's resource shrinker cannot see that
+  anything references them and strips them out of release builds. With no icon
+  id, PlaybackStateCompat's CustomAction.Builder throws
+  "You must specify an icon resource id to build a CustomAction", the playback
+  state broadcast aborts, and neither the media notification nor the foreground
+  service ever starts. Keep all seven.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/audio_service_fast_forward,@drawable/audio_service_fast_rewind,@drawable/audio_service_pause,@drawable/audio_service_play_arrow,@drawable/audio_service_skip_next,@drawable/audio_service_skip_previous,@drawable/audio_service_stop" />
