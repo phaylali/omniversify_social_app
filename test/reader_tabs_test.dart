@@ -29,6 +29,14 @@ void main() {
     local.busy.value = false;
   });
 
+  /// Lets an "Opened" notice come and go: it floats over the viewer's bottom
+  /// bar, so nothing down there can be tapped until it has left.
+  Future<void> clearNotice(WidgetTester tester) async {
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+  }
+
   group('sliding tabs', () {
     testWidgets('labels report taps and only the active one turns gold', (
       tester,
@@ -318,12 +326,13 @@ void main() {
       expect(find.text('3 IN COMICS'), findsOneWidget);
     });
 
-    testWidgets('the share button hands the file to the system', (
+    testWidgets('the share button lives in the viewer, by the privacy chip', (
       tester,
     ) async {
       final dir = Directory.systemTemp.createTempSync('reader_share');
       addTearDown(() => dir.deleteSync(recursive: true));
-      final file = File('${dir.path}/notes.pdf')..writeAsBytesSync([1, 2, 3]);
+      final file = File('${dir.path}/notes.cbz');
+      file.writeAsBytesSync(buildZip({'page1.png': [1]}));
       final local = LocalBooksService.instance;
       local.folders.value = [dir.path];
       local.byFolder.value = {
@@ -331,8 +340,8 @@ void main() {
           FoundBook(
             path: file.path,
             title: 'notes',
-            format: BookFormat.pdf,
-            sizeBytes: 3,
+            format: BookFormat.cbz,
+            sizeBytes: 8,
           ),
         ],
       };
@@ -340,34 +349,62 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
       await tester.pump();
 
-      await tester.tap(find.byKey(ValueKey('local-share-${file.path}')));
+      // The shelf row only opens the book — sharing belongs to the viewer.
+      expect(find.byKey(ValueKey('local-share-${file.path}')), findsNothing);
+
+      // Opening reads a real file, which the fake clock can't complete —
+      // run the tap in a real-async window, then let the viewer render.
+      await tester.runAsync(() async {
+        await tester.tap(find.text('notes'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Page 1 of 1'), findsOneWidget);
+      // Let the "Opened" notice clear — it floats over the bottom bar.
+      await clearNotice(tester);
+
+      final share = find.byKey(const ValueKey('viewer-share'));
+      expect(share, findsOneWidget);
+      // Right beside the chip that says who may see it.
+      expect(
+        tester.getCenter(share).dy,
+        closeTo(tester.getCenter(find.byKey(const ValueKey('viewer-privacy'))).dy, 6),
+      );
+
+      await tester.tap(share);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
       // The app's own sheet, with "Other apps" leading to the system one.
       expect(find.text('Share'), findsOneWidget);
       expect(find.text('Other apps'), findsOneWidget);
-      // The button doesn't borrow the row's tap: no viewer opens behind it.
-      expect(find.textContaining('of 0'), findsNothing);
 
       await tester.tapAt(const Offset(6, 6));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Other apps'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
     });
 
     testWidgets('a file that has since vanished says so instead of sharing', (
       tester,
     ) async {
+      final dir = Directory.systemTemp.createTempSync('reader_gone');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/gone.cbz');
+      file.writeAsBytesSync(buildZip({'page1.png': [1]}));
       final local = LocalBooksService.instance;
-      local.folders.value = ['/storage/emulated/0/Comics'];
+      local.folders.value = [dir.path];
       local.byFolder.value = {
-        '/storage/emulated/0/Comics': const [
+        dir.path: [
           FoundBook(
-            path: '/storage/emulated/0/Comics/gone.cbz',
+            path: file.path,
             title: 'gone',
             format: BookFormat.cbz,
-            sizeBytes: 500000,
+            sizeBytes: 8,
           ),
         ],
       };
@@ -375,9 +412,19 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
       await tester.pump();
 
-      await tester.tap(
-        find.byKey(const ValueKey('local-share-/storage/emulated/0/Comics/gone.cbz')),
-      );
+      await tester.runAsync(() async {
+        await tester.tap(find.text('gone'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Page 1 of 1'), findsOneWidget);
+      await clearNotice(tester);
+
+      // The comic is open, but the bytes have left the phone since.
+      file.deleteSync();
+
+      await tester.tap(find.byKey(const ValueKey('viewer-share')));
       await tester.pump();
 
       expect(
@@ -385,6 +432,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Other apps'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
     });
   });
 
@@ -697,6 +747,106 @@ void main() {
 
       // Let the page counter's save land, then close everything cleanly.
       await tester.pump(const Duration(milliseconds: 600));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    });
+  });
+
+  group('viewer zoom', () {
+    /// Puts a real six-page comic on the shelf and opens it in the viewer.
+    Future<void> openSixPages(WidgetTester tester) async {
+      final dir = Directory.systemTemp.createTempSync('reader_zoom');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/six_pages.cbz');
+      file.writeAsBytesSync(
+        buildZip({for (var i = 1; i <= 6; i++) 'page$i.png': [i]}),
+      );
+      final local = LocalBooksService.instance;
+      local.folders.value = [dir.path];
+      local.byFolder.value = {
+        dir.path: [
+          FoundBook(
+            path: file.path,
+            title: 'Six Pages',
+            format: BookFormat.cbz,
+            sizeBytes: 24,
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(const MaterialApp(home: ReaderScreen()));
+      await tester.pump();
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Six Pages'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Page 1 of 6'), findsOneWidget);
+      // Let the "Opened" notice clear — it floats over the bottom bar.
+      await clearNotice(tester);
+    }
+
+    testWidgets('one flick turns the page even though pages can zoom', (
+      tester,
+    ) async {
+      await openSixPages(tester);
+
+      // Every page is wrapped for pinching, but at 1:1 it claims nothing.
+      expect(find.byKey(const ValueKey('page-zoom-0-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('viewer-zoom-reset')), findsNothing);
+
+      // One fast thumb — moved further than a pinch's first step in a single
+      // event — must still belong to the page view.
+      await tester.drag(find.byType(PageView), const Offset(-600, 0));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Page 2 of 6'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    });
+
+    testWidgets('pinch zooms, then the page pans instead of turning', (
+      tester,
+    ) async {
+      await openSixPages(tester);
+
+      final center = tester.getCenter(find.byKey(const ValueKey('page-zoom-0-0')));
+      final left = await tester.startGesture(center - const Offset(60, 0), pointer: 11);
+      final right = await tester.startGesture(center + const Offset(60, 0), pointer: 12);
+      // Two thumbs spreading, one small step at a time.
+      for (var i = 0; i < 3; i++) {
+        await left.moveBy(const Offset(-30, 0));
+        await right.moveBy(const Offset(30, 0));
+        await tester.pump();
+      }
+      await left.up();
+      await right.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Zoomed in, the page view hands its swipes over.
+      expect(find.byKey(const ValueKey('viewer-zoom-reset')), findsOneWidget);
+      expect(find.text('Page 1 of 6'), findsOneWidget);
+
+      // One finger now drags the zoomed page about instead of turning it.
+      await tester.drag(find.byType(PageView), const Offset(-600, 0));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Page 1 of 6'), findsOneWidget);
+
+      // Snapping back to 1:1 gives swipes to the page view again.
+      await tester.tap(find.byKey(const ValueKey('viewer-zoom-reset')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('viewer-zoom-reset')), findsNothing);
+
+      await tester.drag(find.byType(PageView), const Offset(-600, 0));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Page 2 of 6'), findsOneWidget);
+
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 5));
     });

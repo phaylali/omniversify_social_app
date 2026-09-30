@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
@@ -92,6 +93,13 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   /// Tap the page to hide/show the bars.
   bool _chrome = true;
+
+  /// Whether the open page is pinched in. While it is, the page view hands
+  /// its swipes over to the page so a thumb can pan the zoom instead.
+  bool _zoomed = false;
+
+  /// Bumped to snap every page back to 1:1.
+  int _zoomToken = 0;
 
   int _index = 0;
   PageController? _controller;
@@ -272,6 +280,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       _loading = false;
       _openingPath = null;
       _chrome = true;
+      _zoomed = false;
       _openPath = path;
       _openSource = source;
     });
@@ -305,6 +314,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       setState(() {
         _index = 0;
         _chrome = true;
+        _zoomed = false;
         _openPath = '';
         _openSource = 'local';
       });
@@ -540,26 +550,49 @@ class _ReaderScreenState extends State<ReaderScreen>
   Widget _readerBody() {
     final doc = _doc;
     if (doc == null) return const SizedBox.shrink();
+    // A zoomed page is panned with a thumb, so the page view must stop
+    // listening for swipes of its own.
+    final physics = _zoomed ? const NeverScrollableScrollPhysics() : null;
     if (doc.format == BookFormat.epub) {
       return PageView.builder(
         controller: _controller,
+        physics: physics,
         itemCount: doc.chapters.length,
         onPageChanged: _onPageChanged,
-        itemBuilder: (context, i) => _chapterPage(doc.chapters[i]),
+        itemBuilder: (context, i) => _zoomedPage(
+          _chapterPage(doc.chapters[i]),
+          i,
+        ),
       );
     }
     return PageView.builder(
       controller: _controller,
+      physics: physics,
       itemCount: doc.pageCount,
       onPageChanged: _onPageChanged,
-      itemBuilder: (context, i) => doc.format == BookFormat.pdf
-          ? _pdfPage(i)
-          : _imagePage(doc.images[i]),
+      itemBuilder: (context, i) => _zoomedPage(
+        doc.format == BookFormat.pdf ? _pdfPage(i) : _imagePage(doc.images[i]),
+        i,
+      ),
     );
   }
 
+  /// One pinchable page. The key carries the page's own index so the zoom
+  /// belongs to that page alone, and the token snaps it back to 1:1 on demand.
+  Widget _zoomedPage(Widget page, int index) => _PageZoom(
+    key: ValueKey('page-zoom-$index-$_zoomToken'),
+    onZoomed: (zoomed) {
+      if (!mounted || zoomed == _zoomed) return;
+      setState(() => _zoomed = zoomed);
+    },
+    child: page,
+  );
+
   void _onPageChanged(int index) {
-    setState(() => _index = index);
+    setState(() {
+      _index = index;
+      _zoomed = false;
+    });
     _recordSoon(index + 1);
   }
 
@@ -868,21 +901,20 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
-  /// Hands the file to the system share dialog — the same sheet the music
-  /// player uses, so a book travels the way a song does.
-  Future<void> _shareBook(FoundBook book) async {
-    if (!File(book.path).existsSync()) {
+  /// Hands the open book to the system share dialog — the same sheet the
+  /// music player uses, so a book travels the way a song does. The button
+  /// only exists inside the viewer, next to who may see it.
+  Future<void> _shareOpenBook() async {
+    final path = _openPath;
+    final title = _doc?.title ?? '';
+    if (path.isEmpty || !File(path).existsSync()) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('That file is no longer on this phone.')),
       );
       return;
     }
-    await ShareSheet.show(
-      context,
-      shareText: book.title,
-      files: [XFile(book.path)],
-    );
+    await ShareSheet.show(context, shareText: title, files: [XFile(path)]);
   }
 
   /// One flat list of matches — grouping by folder stops helping the moment
@@ -1119,18 +1151,6 @@ class _ReaderScreenState extends State<ReaderScreen>
                     ),
                   ),
                 ],
-              ),
-            ),
-            IconButton(
-              key: ValueKey('local-share-${book.path}'),
-              onPressed: () => _shareBook(book),
-              tooltip: 'Share this file',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-              icon: Icon(
-                Icons.share_outlined,
-                size: 17,
-                color: gold.withAlpha(160),
               ),
             ),
             if (opening)
@@ -1757,6 +1777,31 @@ class _ReaderScreenState extends State<ReaderScreen>
                     child: Row(
                       children: [
                         _privacyChip(),
+                        if (_openPath.isNotEmpty)
+                          IconButton(
+                            key: const ValueKey('viewer-share'),
+                            tooltip: 'Share',
+                            icon: const Icon(
+                              Icons.ios_share,
+                              color: Colors.white70,
+                              size: 20,
+                            ),
+                            onPressed: _shareOpenBook,
+                          ),
+                        if (_zoomed)
+                          IconButton(
+                            key: const ValueKey('viewer-zoom-reset'),
+                            tooltip: 'Back to 1:1',
+                            icon: const Icon(
+                              Icons.zoom_out_map,
+                              color: Colors.white70,
+                              size: 19,
+                            ),
+                            onPressed: () => setState(() {
+                              _zoomToken++;
+                              _zoomed = false;
+                            }),
+                          ),
                         const Spacer(),
                         if (doc.format == BookFormat.epub)
                           IconButton(
@@ -1811,6 +1856,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     return ValueListenableBuilder<ShareAudience>(
       valueListenable: PrivacyService.instance.audience,
       builder: (context, audience, _) => InkWell(
+        key: const ValueKey('viewer-privacy'),
         borderRadius: BorderRadius.circular(14),
         onTap: () => Navigator.of(
           context,
@@ -1840,5 +1886,151 @@ class _ReaderScreenState extends State<ReaderScreen>
         ),
       ),
     );
+  }
+}
+
+/// A reader page you can pinch open and drag around once it's bigger than
+/// the screen.
+///
+/// This is [InteractiveViewer]'s job done by hand, because a stock one eats
+/// every one-finger flick: its scale recognizer sits nearer the page than the
+/// page view's own, and in a gesture arena the first recognizer to accept
+/// wins — so a fast swipe would silently stop turning pages. Here the
+/// recognizer claims nothing until either two fingers are down (a pinch) or
+/// the page is already zoomed (a drag to look around), and every ordinary
+/// flick is left to the page view.
+class _PageZoom extends StatefulWidget {
+  const _PageZoom({super.key, required this.onZoomed, required this.child});
+
+  /// Reports the moment the page leaves 1:1 — or snaps back to it.
+  final ValueChanged<bool> onZoomed;
+
+  final Widget child;
+
+  @override
+  State<_PageZoom> createState() => _PageZoomState();
+}
+
+class _PageZoomState extends State<_PageZoom> {
+  /// Drawn as `offset + scale * scene`: a point `scene` into the page lands
+  /// on `offset + scale * scene` inside the page box. The offset is then
+  /// clamped to `[box * (1 - scale), 0]`, which keeps the page covering the
+  /// box exactly at 1:1 and never leaves a gap at any other size.
+  double _scale = 1;
+  Offset _offset = Offset.zero;
+
+  /// The pinch under way, re-captured whenever a finger joins or leaves:
+  /// the recognizer re-anchors then, so its reported scale starts over at 1.
+  double _scaleStart = 1;
+  Offset _offsetStart = Offset.zero;
+  Offset _focalStart = Offset.zero;
+
+  Size _box = Size.zero;
+  _ZoomRecognizer? _recognizer;
+
+  late final Map<Type, GestureRecognizerFactory> _gestures =
+      <Type, GestureRecognizerFactory>{
+        _ZoomRecognizer: GestureRecognizerFactoryWithHandlers<_ZoomRecognizer>(
+          () {
+            final recognizer = _ZoomRecognizer(_claims);
+            _recognizer = recognizer;
+            return recognizer;
+          },
+          (recognizer) => recognizer
+            ..onStart = _onStart
+            ..onUpdate = _onUpdate,
+        ),
+      };
+
+  /// Two fingers always mean pinch; one finger is only ours once zoomed, so
+  /// every ordinary flick keeps going to the page view.
+  bool _claims() => _scale > 1 || (_recognizer?.pointerCount ?? 0) > 1;
+
+  void _onStart(ScaleStartDetails details) {
+    _scaleStart = _scale;
+    _offsetStart = _offset;
+    _focalStart = details.localFocalPoint;
+  }
+
+  void _onUpdate(ScaleUpdateDetails details) {
+    if (!mounted) return;
+    // Only a pinch changes the size; a lone finger just drags it about.
+    double scale = (_recognizer?.pointerCount ?? 1) > 1
+        ? (_scaleStart * details.scale).clamp(1.0, 5.0).toDouble()
+        : _scaleStart;
+    // Anything barely off 1:1 is 1:1 — otherwise a slow pinch-out could park
+    // just above the line and leave the page view unable to take a swipe.
+    if (scale < 1.01) scale = 1;
+
+    // The point on the page that sat under the pinch when it began.
+    final Offset scene = Offset(
+      (_focalStart.dx - _offsetStart.dx) / _scaleStart,
+      (_focalStart.dy - _offsetStart.dy) / _scaleStart,
+    );
+    // Keep that point under the moving fingers, inside the box.
+    final Offset focal = details.localFocalPoint;
+    final Offset offset = Offset(
+      (focal.dx - scale * scene.dx)
+          .clamp(_box.width * (1 - scale), 0.0)
+          .toDouble(),
+      (focal.dy - scale * scene.dy)
+          .clamp(_box.height * (1 - scale), 0.0)
+          .toDouble(),
+    );
+    final bool zoomed = scale > 1;
+    setState(() {
+      _scale = scale;
+      _offset = offset;
+    });
+    widget.onZoomed(zoomed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _box = constraints.biggest;
+        return ClipRect(
+          child: RawGestureDetector(
+            behavior: HitTestBehavior.opaque,
+            gestures: _gestures,
+            child: Transform(
+              alignment: Alignment.topLeft,
+              transform: Matrix4.identity()
+                ..translateByDouble(_offset.dx, _offset.dy, 0, 1)
+                ..scaleByDouble(_scale, _scale, _scale, 1),
+              child: widget.child,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// A [ScaleGestureRecognizer] that sits out the gesture arena until
+/// [canClaim] says a pinch — or a drag on an already zoomed page — is its
+/// own, and otherwise lets the page view have it.
+///
+/// While it is not claiming, it ignores move events entirely rather than
+/// accepting and swallowing them: that way it never wins a flick it would
+/// only hold on to, and on pointer-up it still rejects itself cleanly, so
+/// taps keep reaching the page.
+class _ZoomRecognizer extends ScaleGestureRecognizer {
+  _ZoomRecognizer(this.canClaim);
+
+  final bool Function() canClaim;
+
+  @override
+  void handleEvent(PointerEvent event) {
+    final bool move =
+        event is PointerMoveEvent || event is PointerPanZoomUpdateEvent;
+    if (move && !canClaim()) return;
+    super.handleEvent(event);
+    // Two moving fingers mean pinch, and they mean it sooner than the
+    // recognizer's own thresholds allow. The page view's drag only needs one
+    // thumb's 18 pixels, while the pinch's span shows half of each finger's
+    // travel — so without this the drag would take the page mid-pinch.
+    if (move && pointerCount > 1) resolve(GestureDisposition.accepted);
   }
 }
