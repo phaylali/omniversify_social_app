@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../models/post.dart';
 import '../data/dummy_data.dart';
+import '../services/daily_tasks.dart';
 
 class Comment {
   final String id;
@@ -197,6 +198,8 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
   void toggleLike(String postId) {
     final current = state[postId];
     if (current == null) return;
+    // Only a like counts — unliking again can't run the task up and down.
+    if (!current.liked) DailyTasks.instance.recordLike();
     state = {
       ...state,
       postId: current.copyWith(
@@ -232,6 +235,7 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
         commentList: [comment, ...current.commentList],
       ),
     };
+    DailyTasks.instance.recordComment();
   }
 
   void toggleCommentLike(String postId, String commentId) {
@@ -256,6 +260,7 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
   void share(String postId) {
     final current = state[postId];
     if (current == null) return;
+    DailyTasks.instance.recordShare();
     state = {
       ...state,
       postId: current.copyWith(shares: current.shares + 1),

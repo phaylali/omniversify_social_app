@@ -6,6 +6,7 @@ import 'package:omniversify_widget/omniversify_widget.dart';
 
 import '../models/rank.dart';
 import '../services/daily_reset.dart';
+import '../services/daily_tasks.dart';
 import '../services/relationship_service.dart';
 import '../services/xp_service.dart';
 
@@ -132,10 +133,21 @@ class _ProgressTab extends StatelessWidget {
 
   static final NumberFormat _fmt = NumberFormat.decimalPattern('en_US');
 
-  /// Daily login and keep-up count read live; the remaining counts are
-  /// placeholders until action tracking lands.
+  /// Everything on this tab that can move: today's counters, the accounts
+  /// being kept up with, and the XP total itself.
+  static final Listenable _live = Listenable.merge([
+    DailyTasks.instance.revision,
+    RelationshipService.instance.following,
+    XpService.instance.xp,
+  ]);
+
+  /// Every count here is real: the daily ones come from [DailyTasks], follows
+  /// from the relationship service, the login from [XpService]. Only the
+  /// daily counters reset at midnight UTC — "Create a post" still waits for a
+  /// publish button, so it counts from zero.
   List<_Task> get _tasks {
     final following = RelationshipService.instance.following.value;
+    final daily = DailyTasks.instance;
     return [
       _Task(
         icon: Icons.login_rounded,
@@ -150,24 +162,24 @@ class _ProgressTab extends StatelessWidget {
         title: 'Create a post',
         detail: 'Publish to the feed',
         xp: XpActions.createPost,
-        done: 1,
-        goal: 3,
+        done: 0,
+        goal: DailyGoals.posts,
       ),
       _Task(
         icon: Icons.chat_bubble_outline,
         title: 'Comment',
         detail: 'On a post or a scroll',
         xp: XpActions.comment,
-        done: 2,
-        goal: 5,
+        done: daily.comments,
+        goal: DailyGoals.comments,
       ),
       _Task(
         icon: Icons.favorite_border,
         title: 'Like',
         detail: 'Like someone else\'s post',
         xp: XpActions.like,
-        done: 7,
-        goal: 10,
+        done: daily.likes,
+        goal: DailyGoals.likes,
       ),
       _Task(
         icon: Icons.person_add_alt_1_outlined,
@@ -182,14 +194,17 @@ class _ProgressTab extends StatelessWidget {
         title: 'Share',
         detail: 'Share a post off-platform',
         xp: XpActions.share,
-        done: 1,
-        goal: 2,
+        done: daily.shares,
+        goal: DailyGoals.shares,
       ),
     ];
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: _live, builder: (context, _) => _tab(context));
+
+  Widget _tab(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final gold = cs.primary;
     final tasks = _tasks;
@@ -231,7 +246,7 @@ class _ProgressTab extends StatelessWidget {
         ],
         const SizedBox(height: 4),
         Text(
-          'Daily login and Keep up update live — the other counts are placeholders until activity tracking ships.',
+          'Comment, Like and Share count today only and start over at each ${DailyReset.label} — XP, rank and Keep up never do. Create a post has no publish button yet.',
           style: TextStyle(
             fontSize: 11,
             height: 1.4,
@@ -688,7 +703,7 @@ class _CountdownCardState extends State<_CountdownCard> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Tasks and the daily login roll over at ${DailyReset.label}',
+                  'Daily tasks and the login bonus roll over at ${DailyReset.label} — XP, rank and Keep up never reset.',
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.3,

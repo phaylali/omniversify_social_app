@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:omniversify_social_app/data/dummy_data.dart';
+import 'package:omniversify_social_app/data/post_state.dart';
 import 'package:omniversify_social_app/screens/ranks_screen.dart';
 import 'package:omniversify_social_app/screens/tasks_screen.dart';
+import 'package:omniversify_social_app/services/daily_tasks.dart';
 
 void main() {
   setUpAll(() {
@@ -52,7 +55,12 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.text('Keep up'), findsOneWidget);
-      expect(find.text('0/3'), findsOneWidget);
+      expect(find.text('0/3'), findsNWidgets(2)); // Create a post + Keep up
+
+      // The counters that only real actions move all open at zero.
+      expect(find.text('0/5'), findsOneWidget); // Comment
+      expect(find.text('0/10'), findsOneWidget); // Like
+      expect(find.text('0/2'), findsOneWidget); // Share
     });
 
     testWidgets('guide tab lists the xp rules and the curve', (tester) async {
@@ -103,5 +111,45 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 1));
     });
+  });
+
+  // Last: the counters are a process-wide singleton, so the widget tests
+  // above must see them untouched first.
+  test('daily counters count real actions and are written down', () async {
+    final daily = DailyTasks.instance;
+    await daily.init();
+    expect(daily.likes, 0);
+    expect(daily.comments, 0);
+    expect(daily.shares, 0);
+
+    final posts = PostStateNotifier();
+    addTearDown(posts.dispose);
+    final post = dummyPosts.first;
+
+    // A like that turns on counts; taking it straight back off doesn't.
+    posts.toggleLike(post.id);
+    expect(daily.likes, 1);
+    posts.toggleLike(post.id);
+    expect(daily.likes, 1);
+    posts.toggleLike(post.id);
+    expect(daily.likes, 2);
+
+    posts.addComment(post.id, 'nicely put', post.user);
+    expect(daily.comments, 1);
+
+    posts.share(post.id);
+    expect(daily.shares, 1);
+
+    // One listener hears every move, so the Tasks tab can rebuild once.
+    expect(daily.revision.value, greaterThan(0));
+
+    // The day's counts are filed under the UTC day they belong to, which is
+    // the only thing a midnight reset wipes.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('daily_tasks_day_v1'), isNotNull);
+    expect(prefs.getInt('daily_tasks_likes_v1'), 2);
+    expect(prefs.getInt('daily_tasks_comments_v1'), 1);
+    expect(prefs.getInt('daily_tasks_shares_v1'), 1);
   });
 }

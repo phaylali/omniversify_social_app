@@ -7,6 +7,7 @@ import 'core/config/api_config.dart';
 import 'models/post.dart';
 import 'data/dummy_data.dart';
 import 'services/audio_player_service.dart';
+import 'services/daily_tasks.dart';
 import 'services/date_cache.dart';
 import 'services/date_service.dart';
 import 'services/deep_link_service.dart';
@@ -36,6 +37,8 @@ void main() async {
   await InterestsService.instance.init();
   // Who may see what you're reading or playing — before its tabs first paint.
   await PrivacyService.instance.load();
+  // Today's task counters, so the Tasks page opens on the right day's counts.
+  await DailyTasks.instance.init();
   // Start media session + load persisted player settings before first frame
   // so the Android notification is ready as soon as playback begins.
   final audio = AudioPlayerService.instance;
