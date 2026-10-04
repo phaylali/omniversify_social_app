@@ -31,7 +31,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -56,6 +56,49 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="https" android:host="app.omniversify.com"/>
+            </intent-filter>
+            <!-- Books another app opens with us: tap a PDF, EPUB, CBZ or CBR
+                 in Downloads or a file manager and it lands in the reader. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="application/pdf"/>
+                <data android:mimeType="application/epub+zip"/>
+                <data android:mimeType="application/x-cbz"/>
+                <data android:mimeType="application/vnd.comicbook+zip"/>
+                <data android:mimeType="application/comicbook+zip"/>
+                <data android:mimeType="application/x-cbr"/>
+                <data android:mimeType="application/vnd.comicbook-rar"/>
+                <data android:mimeType="application/x-rar-compressed"/>
+                <data android:mimeType="application/rar"/>
+            </intent-filter>
+            <!-- …and for senders that only know the name: …/book.cbz typed
+                 as anything, or given no type at all. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content" android:host="*"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.pdf"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.PDF"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.epub"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.EPUB"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.cbz"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.CBZ"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.cbr"/>
+                <data android:mimeType="*/*" android:pathPattern=".*\.CBR"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content" android:host="*"/>
+                <data android:pathPattern=".*\.pdf"/>
+                <data android:pathPattern=".*\.PDF"/>
+                <data android:pathPattern=".*\.epub"/>
+                <data android:pathPattern=".*\.EPUB"/>
+                <data android:pathPattern=".*\.cbz"/>
+                <data android:pathPattern=".*\.CBZ"/>
+                <data android:pathPattern=".*\.cbr"/>
+                <data android:pathPattern=".*\.CBR"/>
             </intent-filter>
         </activity>
         <!-- audio_service: required for media notification / background playback -->

@@ -13,6 +13,7 @@ import 'services/date_service.dart';
 import 'services/deep_link_service.dart';
 import 'services/interests_service.dart';
 import 'services/mute_service.dart';
+import 'services/open_file_service.dart';
 import 'services/privacy_service.dart';
 import 'services/relationship_service.dart';
 import 'services/xp_service.dart';
@@ -48,6 +49,8 @@ void main() async {
   // Handle app/web links once the first frame is up.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     DeepLinkService.instance.init(rootNavigatorKey);
+    // Books other apps open with us — "Open with Omniversify".
+    OpenFileService.instance.init(rootNavigatorKey);
   });
 }
 

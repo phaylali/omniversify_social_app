@@ -14,6 +14,7 @@ import '../services/activity_service.dart';
 import '../services/book_loader.dart';
 import '../services/discover_source.dart';
 import '../services/local_books.dart';
+import '../services/open_file_service.dart';
 import '../services/privacy_service.dart';
 import '../services/reader_library.dart';
 import '../widgets/action_sheet.dart';
@@ -144,10 +145,16 @@ class _ReaderScreenState extends State<ReaderScreen>
     super.initState();
     ReaderLibrary.instance.load();
     LocalBooksService.instance.load();
+    // Books another app opens with us arrive here — whether or not one of
+    // our own is already open. One frame late, so the reader is built first.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) OpenFileService.instance.attach(_openSharedFile);
+    });
   }
 
   @override
   void dispose() {
+    OpenFileService.instance.detach(_openSharedFile);
     _recordTimer?.cancel();
     _flushProgress();
     final doc = _doc;
@@ -248,6 +255,12 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
     }
   }
+
+  /// Takes a book another app handed us and opens it in place — the same
+  /// road a shelf row or a Library row takes, so it records progress and
+  /// shows up in the Library like any other open.
+  Future<void> _openSharedFile(String path, {String? title}) =>
+      _openFromPath(path, title: title);
 
   /// Everything that opens a book ends here: decode, then land on
   /// [startPage] and tell the Library where it stopped.

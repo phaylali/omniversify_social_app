@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.KeyEvent
 import android.webkit.MimeTypeMap
@@ -18,13 +19,16 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class MainActivity : AudioServiceActivity() {
     private val widgetChannel = "omniversify/music_widget"
     private val actionChannel = "omniversify/audio_actions"
+    private val openFileChannel = "omniversify/open_file"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        setupOpenFileChannel(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, widgetChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -44,6 +48,118 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         setupAudioActionChannel(flutterEngine)
+    }
+
+    // ── Books another app opens with us ─────────────────────────────────
+
+    /// Turns a file URI from an "Open with Omniversify" intent into a path
+    /// Dart can read: `content://` URIs are streams behind someone else's
+    /// permission, so the book is copied into this app's own storage first.
+    /// The reader, the Library and the share button all want a real path.
+    private fun setupOpenFileChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, openFileChannel)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "materialize") {
+                    val uri = call.argument<String>("uri")
+                    if (uri.isNullOrBlank()) {
+                        result.error("args", "No file to open.", null)
+                    } else {
+                        materialize(uri, result)
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
+    }
+
+    private fun materialize(uriString: String, result: MethodChannel.Result) {
+        // Copying can take a while on a big comic — off the main thread.
+        Thread {
+            try {
+                val uri = Uri.parse(uriString)
+                val path = if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
+                    uri.path ?: throw IllegalArgumentException(
+                        "That file is no longer on this phone."
+                    )
+                } else {
+                    copyToImports(uri)
+                }
+                runOnUiThread { result.success(path) }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    result.error("open", e.message ?: "That file couldn't be opened.", null)
+                }
+            }
+        }.start()
+    }
+
+    private fun copyToImports(uri: Uri): String {
+        val resolver = contentResolver
+
+        // "msf:123" and friends carry no extension — borrow one from the type.
+        var name = displayName(uri)
+        if (!name.contains('.')) {
+            name = "${name}.${extensionFor(resolver.getType(uri)) ?: "bin"}"
+        }
+        name = name.replace('/', '_')
+        if (name.isBlank()) name = "book"
+
+        val dest = File(File(filesDir, "imports").apply { mkdirs() }, name)
+
+        // Re-opening a book already copied doesn't copy it all over again.
+        val size = sizeOf(uri)
+        if (dest.isFile && size > 0 && dest.length() == size) {
+            return dest.absolutePath
+        }
+
+        val input = resolver.openInputStream(uri)
+            ?: throw IllegalArgumentException("That file couldn't be opened.")
+        input.use { stream ->
+            FileOutputStream(dest).use { out -> stream.copyTo(out) }
+        }
+        return dest.absolutePath
+    }
+
+    private fun displayName(uri: Uri): String {
+        try {
+            contentResolver.query(
+                uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val name = cursor.getString(0)
+                    if (!name.isNullOrBlank()) return name
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return uri.lastPathSegment?.substringAfterLast('/') ?: "book"
+    }
+
+    private fun sizeOf(uri: Uri): Long = try {
+        contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else -1L
+            } ?: -1L
+    } catch (_: Exception) {
+        -1L
+    }
+
+    /// Android's name for a book's type, for the types its MIME map never
+    /// got around to (the comics, for a start).
+    private fun extensionFor(mime: String?): String? {
+        if (mime.isNullOrBlank()) return null
+        MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)?.let { return it }
+        return when (mime) {
+            "application/epub+zip" -> "epub"
+            "application/x-cbz",
+            "application/vnd.comicbook+zip",
+            "application/comicbook+zip" -> "cbz"
+            "application/x-cbr",
+            "application/vnd.comicbook-rar",
+            "application/x-rar-compressed",
+            "application/rar" -> "cbr"
+            else -> null
+        }
     }
 
     // ── Ringtone / file actions (triggered from Dart on demand only) ──────
