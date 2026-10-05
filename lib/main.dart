@@ -15,6 +15,7 @@ import 'services/interests_service.dart';
 import 'services/mute_service.dart';
 import 'services/open_file_service.dart';
 import 'services/messages_service.dart';
+import 'services/episode_tracker_service.dart';
 import 'services/privacy_service.dart';
 import 'services/relationship_service.dart';
 import 'services/share_in_service.dart';
@@ -44,6 +45,8 @@ void main() async {
   await PrivacyService.instance.load();
   // Starred places + the last ten weather visits, before that screen opens.
   await WeatherLocations.instance.load();
+  // Episode checkmarks per series, so the tracker button shows a count.
+  await EpisodeTrackerService.instance.load();
   // Today's task counters, so the Tasks page opens on the right day's counts.
   await DailyTasks.instance.init();
   // Start media session + load persisted player settings before first frame

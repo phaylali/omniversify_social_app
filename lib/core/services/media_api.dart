@@ -79,6 +79,43 @@ class MediaApi {
     return json;
   }
 
+  /// Every episode of a series: `GET /api/v1/{category}/{id}/episodes`.
+  ///
+  /// Walks the pages (the route caps `limit` at 200) until the whole run is
+  /// in. Only shows that store episode rows expose it — callers fall back to
+  /// the embedded `episodes` map on the detail payload when this throws.
+  static Future<List<Map<String, dynamic>>> episodes({
+    required String category,
+    required dynamic id,
+  }) async {
+    final all = <Map<String, dynamic>>[];
+    for (var page = 1; page <= 40; page++) {
+      final uri = Uri.parse('$_base/api/v1/$category/$id/episodes')
+          .replace(queryParameters: {'page': '$page', 'limit': '200'});
+      final resp = await http.get(uri);
+
+      if (resp.statusCode != 200) {
+        throw MediaApiException(
+            'Failed to load episodes for $category/$id: ${resp.statusCode}');
+      }
+
+      final json = jsonDecode(resp.body);
+      if (json is! Map<String, dynamic>) {
+        throw MediaApiException(
+            'Unexpected episode payload for $category/$id');
+      }
+
+      final results = (json['results'] as List<dynamic>? ?? const [])
+          .map((e) => e as Map<String, dynamic>)
+          .toList();
+      all.addAll(results);
+
+      final total = json['total'] as int? ?? all.length;
+      if (results.isEmpty || all.length >= total) break;
+    }
+    return all;
+  }
+
   /// Merge title + artist searches for music (API supports both params).
   static Future<MediaPage> searchMusic({
     required String query,

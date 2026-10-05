@@ -2,8 +2,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../core/services/media_api.dart';
+import '../services/episode_tracker_service.dart';
 import '../services/tracker_collection_service.dart';
 import '../widgets/app_logo.dart';
+import 'series_tracking_screen.dart';
 
 /// A generic tracker screen with three tabs: Discover, Wishlist, Library.
 /// Discover fetches live data from the omniversify-api backend as a grid.
@@ -1513,6 +1515,10 @@ class _MediaDetailDialogState extends State<_MediaDetailDialog> {
                         ),
                       ],
                     ),
+                    if (_tracksEpisodes) ...[
+                      const SizedBox(height: 14),
+                      _trackEpisodesButton(),
+                    ],
                     if (_loadingDetail) ...[
                       const SizedBox(height: 20),
                       Center(
@@ -1572,6 +1578,48 @@ class _MediaDetailDialogState extends State<_MediaDetailDialog> {
       default:
         return '';
     }
+  }
+
+  /// Shows that keep an episode map — TV and anime — open the tracking page.
+  bool get _tracksEpisodes =>
+      (_item['id'] != null) &&
+      (widget.category == 'tv' || widget.category == 'anime');
+
+  /// Full page of checkmarks: every season, every episode, mark one or all.
+  Widget _trackEpisodesButton() {
+    final series =
+        EpisodeTrackerService.seriesKey(widget.category, _item['id']);
+    return SizedBox(
+      width: double.infinity,
+      child: ValueListenableBuilder<Map<String, Set<String>>>(
+        valueListenable: EpisodeTrackerService.instance.watched,
+        builder: (context, watched, _) {
+          final done = watched[series]?.length ?? 0;
+          return OutlinedButton.icon(
+            key: const ValueKey('track-episodes'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => SeriesTrackingScreen(
+                  category: widget.category,
+                  item: _item,
+                  accent: widget.accent,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.playlist_add_check, size: 18),
+            label: Text(
+              done > 0 ? 'Episodes · $done watched' : 'Track episodes',
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: widget.accent,
+              side: BorderSide(color: widget.accent.withAlpha(90)),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 
