@@ -108,18 +108,33 @@ void main() {
       await tester.pump();
 
       expect(find.text('RIGHT NOW'), findsOneWidget);
-      expect(find.text('Reading Dune'), findsOneWidget);
+      expect(find.text('Reading Dune', findRichText: true), findsOneWidget);
       expect(find.text('ACQUAINTANCES'), findsOneWidget);
-      expect(find.textContaining('Listening to'), findsWidgets);
+      expect(find.textContaining('Listening to', findRichText: true),
+          findsWidgets);
+
+      // The act wears its own colour; the title beside it does not.
+      // Text.rich wraps the span once, so the act sits one level down.
+      final wrapper = tester
+          .widget<RichText>(
+            find.text('Reading Dune', findRichText: true),
+          )
+          .text as TextSpan;
+      final act = wrapper.children!.first as TextSpan;
+      final rest = act.children!.first as TextSpan;
+      expect(act.text, 'Reading');
+      expect(rest.text, ' Dune');
+      expect(act.style?.color, isNot(rest.style?.color));
 
       // Private stops sharing your row but never hides other people's.
       await PrivacyService.instance.set(ShareAudience.private);
       await tester.pump();
 
-      expect(find.text('Reading Dune'), findsNothing);
+      expect(find.text('Reading Dune', findRichText: true), findsNothing);
       expect(find.text('Nothing shared right now'), findsOneWidget);
       expect(find.text('PRIVATE'), findsOneWidget);
-      expect(find.textContaining('Listening to'), findsWidgets);
+      expect(find.textContaining('Listening to', findRichText: true),
+          findsWidgets);
     });
   });
 

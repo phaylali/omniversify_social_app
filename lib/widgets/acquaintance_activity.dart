@@ -6,6 +6,9 @@ import '../services/activity_service.dart';
 import '../services/audio_player_service.dart';
 import '../services/privacy_service.dart';
 
+/// What music activity wears: the headphones avatar and its act.
+const _listeningAccent = Color(0xFFB15CFF);
+
 /// The "right now" strip at the top of the Acquaintances tab: what you're
 /// playing or reading (gated by the Privacy setting) followed by what your
 /// acquaintances are up to.
@@ -96,13 +99,19 @@ class _AcquaintanceActivityState extends State<AcquaintanceActivity> {
               _chip(context, audience),
             ],
           ),
-          subtitle: Text(
-            shared && own != null ? own.line : 'Nothing shared right now',
-            style: TextStyle(
-              fontSize: 12,
-              color: shared && own != null ? gold : cs.onSurface.withAlpha(150),
-            ),
-          ),
+          subtitle: own == null || !shared
+              ? Text(
+                  'Nothing shared right now',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: cs.onSurface.withAlpha(150),
+                  ),
+                )
+              : _activityLine(
+                  own,
+                  actColor: gold,
+                  subjectColor: cs.onSurface.withAlpha(180),
+                ),
           trailing: Icon(
             shared ? Icons.radio_button_checked : Icons.visibility_off_outlined,
             size: 15,
@@ -131,12 +140,12 @@ class _AcquaintanceActivityState extends State<AcquaintanceActivity> {
       leading: CircleAvatar(
         radius: 20,
         backgroundColor: listening
-            ? const Color(0xFFB15CFF).withAlpha(30)
+            ? _listeningAccent.withAlpha(30)
             : gold.withAlpha(30),
         child: Icon(
           listening ? Icons.headphones_outlined : Icons.menu_book_outlined,
           size: 18,
-          color: listening ? const Color(0xFFB15CFF) : gold,
+          color: listening ? _listeningAccent : gold,
         ),
       ),
       title: Row(
@@ -153,15 +162,42 @@ class _AcquaintanceActivityState extends State<AcquaintanceActivity> {
           ),
         ],
       ),
-      subtitle: Text(
-        entry.line,
-        style: TextStyle(fontSize: 12, color: cs.onSurface.withAlpha(180)),
+      subtitle: _activityLine(
+        entry,
+        actColor: listening ? _listeningAccent : gold,
+        subjectColor: cs.onSurface.withAlpha(180),
       ),
       trailing: Text(
         entry.when,
         style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(130)),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    );
+  }
+
+  /// The row's activity as two colours: the act (`Reading`, `Listening to`)
+  /// in [actColor] and what it is about in [subjectColor], so the verb never
+  /// blends into the title beside it.
+  Widget _activityLine(
+    ActivityEntry entry, {
+    required Color actColor,
+    required Color subjectColor,
+  }) {
+    return Text.rich(
+      TextSpan(
+        text: entry.act,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: actColor,
+        ),
+        children: [
+          TextSpan(
+            text: ' ${entry.subject}',
+            style: TextStyle(fontSize: 12, color: subjectColor),
+          ),
+        ],
+      ),
     );
   }
 

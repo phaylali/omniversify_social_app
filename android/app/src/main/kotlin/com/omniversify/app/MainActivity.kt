@@ -16,6 +16,7 @@ import android.webkit.MimeTypeMap
 import com.ryanheise.audioservice.AudioServiceActivity
 import com.ryanheise.audioservice.MediaButtonReceiver
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
@@ -25,6 +26,10 @@ class MainActivity : AudioServiceActivity() {
     private val widgetChannel = "omniversify/music_widget"
     private val actionChannel = "omniversify/audio_actions"
     private val openFileChannel = "omniversify/open_file"
+    private val shareChannel = "omniversify/share_in"
+
+    private var shareSink: EventChannel.EventSink? = null
+    private var pendingShare: Map<String, Any?>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -48,6 +53,7 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         setupAudioActionChannel(flutterEngine)
+        setupShareChannel(flutterEngine)
     }
 
     // ── Books another app opens with us ─────────────────────────────────
@@ -70,6 +76,61 @@ class MainActivity : AudioServiceActivity() {
                     result.notImplemented()
                 }
             }
+    }
+
+    // ── A caption or link another app sends us ─────────────────────────
+
+    /// Waits for "Share to Omniversify". Dart subscribes once; anything that
+    /// was handed to us before that sits in [pendingShare] and goes out the
+    /// moment somebody listens.
+    private fun setupShareChannel(flutterEngine: FlutterEngine) {
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, shareChannel)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(
+                    arguments: Any?,
+                    events: EventChannel.EventSink?,
+                ) {
+                    shareSink = events
+                    val waiting = pendingShare
+                    pendingShare = null
+                    if (waiting != null) events?.success(waiting)
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    shareSink = null
+                }
+            })
+    }
+
+    /// Pulls the words out of an ACTION_SEND intent — Instagram, a browser,
+    /// anything with "Share to Omniversify" in its sheet — and pushes them to
+    /// Dart if it is listening, otherwise parks them until it is.
+    private fun handleShareIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+
+        fun words(key: String): String =
+            (intent.getStringExtra(key)
+                ?: intent.getCharSequenceExtra(key)?.toString())
+                ?.trim().orEmpty()
+
+        val text = words(Intent.EXTRA_TEXT)
+        val subject = words(Intent.EXTRA_SUBJECT)
+        val hasFile = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) != null
+
+        // Nothing but the tap on our own icon: let the app open normally.
+        if (text.isEmpty() && subject.isEmpty() && !hasFile) return
+
+        val payload = mapOf("text" to text, "subject" to subject)
+        // Clear it so a recreated activity doesn't open the sheet twice.
+        intent.removeExtra(Intent.EXTRA_TEXT)
+        intent.removeExtra(Intent.EXTRA_SUBJECT)
+        intent.removeExtra(Intent.EXTRA_STREAM)
+
+        if (shareSink != null) {
+            shareSink?.success(payload)
+        } else {
+            pendingShare = payload
+        }
     }
 
     private fun materialize(uriString: String, result: MethodChannel.Result) {
@@ -362,12 +423,14 @@ class MainActivity : AudioServiceActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleWidgetAction(intent)
+        handleShareIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleWidgetAction(intent)
+        handleShareIntent(intent)
     }
 
     private fun handleWidgetAction(intent: Intent?) {

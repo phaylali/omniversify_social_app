@@ -26,14 +26,22 @@ class ActivityEntry {
   /// Age of the activity, shown as `now` / `3m` / `1h`.
   final String when;
 
-  /// `Listening to …` / `Reading …`.
-  String get line => switch (kind) {
-    ActivityKind.listening =>
-      subtitle == null
-          ? 'Listening to $title'
-          : 'Listening to $title · $subtitle',
-    ActivityKind.reading => 'Reading $title',
+  /// The act on its own — `Reading` / `Listening to` — so a row can paint it
+  /// in the accent colour and leave what follows in the ordinary one.
+  String get act => switch (kind) {
+    ActivityKind.listening => 'Listening to',
+    ActivityKind.reading => 'Reading',
   };
+
+  /// What the act is about: the title, plus the artist when there is one.
+  String get subject => switch (kind) {
+    ActivityKind.listening =>
+      subtitle == null ? title : '$title · $subtitle',
+    ActivityKind.reading => title,
+  };
+
+  /// `Listening to …` / `Reading …` — [act] then [subject].
+  String get line => '$act $subject';
 
   ActivityEntry copyWith({String? when}) => ActivityEntry(
     name: name,

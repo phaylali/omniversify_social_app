@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import '../core/config/api_config.dart';
-import '../data/dummy_data.dart';
+import '../services/messages_service.dart';
 
 /// Instagram-style share sheet:
 ///  - "Other apps" row on top → native OS share dialog
 ///  - people list below → multi-select and send in-app
+///
+/// Sending does not just play a snackbar: the words are written into each
+/// picked conversation, so they are waiting in the thread — and the same
+/// sheet is what opens when another app shares *into* Omniversify.
 class ShareSheet extends StatefulWidget {
   const ShareSheet({
     super.key,
@@ -72,12 +76,18 @@ class _ShareSheetState extends State<ShareSheet> {
     }
   }
 
-  void _send() {
-    final names = shareRecipients
+  Future<void> _send() async {
+    final handles = MessagesService.people
         .where((p) => _selected.contains(p.handle))
-        .map((p) => p.name)
-        .toList();
-    if (names.isEmpty) return;
+        .map((p) => p.handle)
+        .toList(growable: false);
+    if (handles.isEmpty) return;
+    final names =
+        handles.map(MessagesService.nameFor).toList(growable: false);
+    // Written into every picked conversation first, so the words are there
+    // by the time the confirmation appears.
+    await MessagesService.instance.shareTo(handles, widget.shareText);
+    if (!mounted) return;
     Navigator.of(context).pop();
     widget.onShared?.call();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -205,11 +215,12 @@ class _ShareSheetState extends State<ShareSheet> {
               child: ListView.builder(
                 shrinkWrap: true,
                 padding: EdgeInsets.zero,
-                itemCount: shareRecipients.length,
+                itemCount: MessagesService.people.length,
                 itemBuilder: (context, index) {
-                  final person = shareRecipients[index];
+                  final person = MessagesService.people[index];
                   final selected = _selected.contains(person.handle);
                   return ListTile(
+                    key: ValueKey('share-person-${person.handle}'),
                     dense: true,
                     leading: CircleAvatar(
                       radius: 20,
@@ -278,6 +289,7 @@ class _ShareSheetState extends State<ShareSheet> {
                 width: double.infinity,
                 height: 46,
                 child: FilledButton(
+                  key: const ValueKey('share-send'),
                   onPressed: _selected.isEmpty ? null : _send,
                   style: FilledButton.styleFrom(
                     backgroundColor: gold,

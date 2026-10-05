@@ -16,6 +16,8 @@ import 'services/mute_service.dart';
 import 'services/open_file_service.dart';
 import 'services/privacy_service.dart';
 import 'services/relationship_service.dart';
+import 'services/share_in_service.dart';
+import 'services/weather_locations.dart';
 import 'services/xp_service.dart';
 import 'widgets/widgets.dart';
 import 'screens/scrolls_screen.dart';
@@ -38,6 +40,8 @@ void main() async {
   await InterestsService.instance.init();
   // Who may see what you're reading or playing — before its tabs first paint.
   await PrivacyService.instance.load();
+  // Starred places + the last ten weather visits, before that screen opens.
+  await WeatherLocations.instance.load();
   // Today's task counters, so the Tasks page opens on the right day's counts.
   await DailyTasks.instance.init();
   // Start media session + load persisted player settings before first frame
@@ -51,6 +55,8 @@ void main() async {
     DeepLinkService.instance.init(rootNavigatorKey);
     // Books other apps open with us — "Open with Omniversify".
     OpenFileService.instance.init(rootNavigatorKey);
+    // Captions and links other apps send us — "Share to Omniversify".
+    ShareInService.instance.init();
   });
 }
 
@@ -84,6 +90,52 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  bool _shareSheetOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // A caption or link another app sent us — the picker opens over
+    // whatever tab is on screen at the time.
+    ShareInService.instance.incoming.addListener(_showIncomingShare);
+  }
+
+  @override
+  void dispose() {
+    ShareInService.instance.incoming.removeListener(_showIncomingShare);
+    super.dispose();
+  }
+
+  void _showIncomingShare() {
+    final share = ShareInService.instance.incoming.value;
+    if (share == null || !mounted || _shareSheetOpen) return;
+    ShareInService.instance.consume();
+
+    // A file with no words to go with it: say so instead of opening a sheet
+    // with an empty preview.
+    if (share.fileOnly) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'That was a file — send a link or a caption instead.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    _shareSheetOpen = true;
+    ShareSheet.show(context, shareText: share.preview).whenComplete(() {
+      _shareSheetOpen = false;
+      // A second share while the first was still open waits here.
+      if (mounted && ShareInService.instance.incoming.value != null) {
+        _showIncomingShare();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

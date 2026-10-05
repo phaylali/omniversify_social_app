@@ -48,6 +48,18 @@ class GeoLocation {
         lon: (json['longitude'] as num).toDouble(),
       );
 
+  /// Same shape as [fromJson] — a saved place round-trips through storage.
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'country': country,
+        'admin1': admin1,
+        'latitude': lat,
+        'longitude': lon,
+      };
+
+  /// Two places are the same when they sit on the same coordinates.
+  bool sameAs(GeoLocation other) => lat == other.lat && lon == other.lon;
+
   String get displayName => admin1 != null ? '$name, $admin1' : '$name, $country';
 }
 

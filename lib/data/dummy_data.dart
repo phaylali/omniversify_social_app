@@ -227,16 +227,6 @@ final dummyPosts = [
   ),
 ];
 
-/// People shown in the share sheet's "Send to" list (same crowd as the DM drawer).
-const shareRecipients = [
-  PostUser(name: 'Ahmed', handle: '@ahmed_m'),
-  PostUser(name: 'Sara', handle: '@sara_dev', verified: true),
-  PostUser(name: 'Omar', handle: '@omar_92'),
-  PostUser(name: 'Fatima', handle: '@fatima_art', verified: true),
-  PostUser(name: 'Karim', handle: '@karim_w'),
-  PostUser(name: 'Amina', handle: '@amina_stream', verified: true),
-];
-
 class ScrollItem {
   final String id;
   final String username;

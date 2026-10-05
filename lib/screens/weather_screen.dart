@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
-import '../services/weather_service.dart';
 
+import '../services/weather_locations.dart';
+import '../services/weather_service.dart';
+import '../widgets/sliding_tabs.dart';
+
+/// Weather for one place at a time, with a second tab that remembers where
+/// you have been: the last place you opened under **Current**, and under
+/// **Locations** everything you starred followed by your last ten visits.
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
 
@@ -14,8 +20,21 @@ class _WeatherScreenState extends State<WeatherScreen> {
   GeoLocation? _location;
   List<GeoLocation> _suggestions = [];
   bool _loading = false;
-  bool _searching = false;
   String? _error;
+
+  /// 0 = Current (search + weather), 1 = Locations (starred + history).
+  int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Reopen on the last place you looked up, so "Current" means what it says.
+    WeatherLocations.instance.load().then((_) {
+      if (!mounted) return;
+      final saved = WeatherLocations.instance.current.value;
+      if (saved != null) _open(saved, remember: false);
+    });
+  }
 
   @override
   void dispose() {
@@ -24,19 +43,51 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _search(String q) async {
-    if (q.trim().length < 2) { setState(() => _suggestions = []); return; }
+    if (q.trim().length < 2) {
+      setState(() => _suggestions = []);
+      return;
+    }
     final results = await WeatherService.searchLocation(q);
     if (mounted) setState(() => _suggestions = results);
   }
 
-  Future<void> _selectLocation(GeoLocation loc) async {
-    setState(() { _loading = true; _searching = false; _error = null; _suggestions = []; _searchCtrl.clear(); });
+  /// Opens [loc] in the Current tab and remembers the visit.
+  Future<void> _open(GeoLocation loc, {bool remember = true}) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _suggestions = [];
+      _searchCtrl.clear();
+    });
     try {
       final data = await WeatherService.fetchWeather(loc.lat, loc.lon);
-      if (mounted) setState(() { _weather = data; _location = loc; _loading = false; });
+      if (!mounted) return;
+      setState(() {
+        _weather = data;
+        _location = loc;
+        _loading = false;
+      });
+      if (remember) await WeatherLocations.instance.record(loc);
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
+  }
+
+  /// Taps a saved place: straight to the Current tab, weather and all.
+  void _openSaved(GeoLocation loc) {
+    setState(() => _tab = 0);
+    _open(loc);
+  }
+
+  Future<void> _toggleStar() async {
+    final loc = _location;
+    if (loc == null) return;
+    await WeatherLocations.instance.toggleStar(loc);
+    if (mounted) setState(() {});
   }
 
   @override
@@ -46,101 +97,195 @@ class _WeatherScreenState extends State<WeatherScreen> {
       appBar: AppBar(title: const Text('Weather')),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _searchCtrl,
-                  decoration: InputDecoration(
-                    hintText: 'Search location...',
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    suffixIcon: _searchCtrl.text.isNotEmpty
-                        ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () { _searchCtrl.clear(); setState(() => _suggestions = []); })
-                        : null,
-                    filled: true,
-                    fillColor: cs.surfaceContainerHighest.withAlpha(80),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                  ),
-                  onChanged: _search,
-                ),
-                if (_suggestions.isNotEmpty)
-                  Container(
-                    margin: const EdgeInsets.only(top: 4),
-                    constraints: const BoxConstraints(maxHeight: 200),
-                    decoration: BoxDecoration(
-                      color: cs.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _suggestions.length,
-                      itemBuilder: (_, i) {
-                        final loc = _suggestions[i];
-                        return ListTile(
-                          dense: true,
-                          leading: const Icon(Icons.location_on_outlined, size: 18),
-                          title: Text(loc.name, style: const TextStyle(fontSize: 14)),
-                          subtitle: Text(loc.displayName, style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(120))),
-                          onTap: () => _selectLocation(loc),
-                        );
-                      },
-                    ),
-                  ),
-              ],
-            ),
+          SlidingTabs(
+            labels: const ['Current', 'Locations'],
+            index: _tab,
+            onSelect: (index) => setState(() => _tab = index),
           ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(Icons.cloud_off, size: 48, color: cs.onSurface.withAlpha(80)),
-                        const SizedBox(height: 12),
-                        Text(_error!, style: TextStyle(color: cs.onSurface.withAlpha(150))),
-                      ]))
-                    : _weather == null
-                        ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                            Icon(Icons.wb_sunny_outlined, size: 64, color: cs.onSurface.withAlpha(60)),
-                            const SizedBox(height: 12),
-                            Text('Search for a location', style: TextStyle(color: cs.onSurface.withAlpha(120))),
-                          ]))
-                        : _buildWeather(cs),
-          ),
+          Expanded(child: _tab == 0 ? _currentTab(cs) : _locationsTab(cs)),
         ],
       ),
     );
   }
 
+  // ─── Current ────────────────────────────────────────────────
+
+  Widget _currentTab(ColorScheme cs) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              TextField(
+                controller: _searchCtrl,
+                decoration: InputDecoration(
+                  hintText: 'Search location...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  suffixIcon: _searchCtrl.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _suggestions = []);
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: cs.surfaceContainerHighest.withAlpha(80),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: _search,
+              ),
+              if (_suggestions.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 4),
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _suggestions.length,
+                    itemBuilder: (_, i) {
+                      final loc = _suggestions[i];
+                      return ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.location_on_outlined,
+                            size: 18),
+                        title: Text(loc.name,
+                            style: const TextStyle(fontSize: 14)),
+                        subtitle: Text(
+                          loc.displayName,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.onSurface.withAlpha(120),
+                          ),
+                        ),
+                        onTap: () => _open(loc),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: _weatherBody(cs)),
+      ],
+    );
+  }
+
+  Widget _weatherBody(ColorScheme cs) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.cloud_off, size: 48, color: cs.onSurface.withAlpha(80)),
+            const SizedBox(height: 12),
+            Text(_error!,
+                style: TextStyle(color: cs.onSurface.withAlpha(150))),
+          ],
+        ),
+      );
+    }
+    if (_weather == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.wb_sunny_outlined,
+                size: 64, color: cs.onSurface.withAlpha(60)),
+            const SizedBox(height: 12),
+            Text('Search for a location',
+                style: TextStyle(color: cs.onSurface.withAlpha(120))),
+          ],
+        ),
+      );
+    }
+    return _buildWeather(cs);
+  }
+
   Widget _buildWeather(ColorScheme cs) {
     final w = _weather!;
+    final gold = cs.primary;
+    final starred = _location != null &&
+        WeatherLocations.instance.isStarred(_location!);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         children: [
           if (_location != null)
-            Text(_location!.displayName, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    _location!.displayName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  key: const ValueKey('weather-star-current'),
+                  tooltip: starred ? 'Remove from starred' : 'Star this place',
+                  onPressed: _toggleStar,
+                  icon: Icon(
+                    starred ? Icons.star : Icons.star_border,
+                    color: starred ? gold : cs.onSurface.withAlpha(140),
+                    size: 22,
+                  ),
+                ),
+              ],
+            ),
+          const SizedBox(height: 4),
           Text(w.current.icon, style: const TextStyle(fontSize: 56)),
           const SizedBox(height: 4),
-          Text('${w.current.temp.round()}°C', style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w600)),
-          Text(w.current.description, style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: cs.onSurface.withAlpha(160))),
+          Text(
+            '${w.current.temp.round()}°C',
+            style: Theme.of(context)
+                .textTheme
+                .displaySmall
+                ?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          Text(
+            w.current.description,
+            style: Theme.of(context)
+                .textTheme
+                .bodyLarge
+                ?.copyWith(color: cs.onSurface.withAlpha(160)),
+          ),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _statChip(Icons.thermostat_outlined, 'Feels ${w.current.feelsLike.round()}°', cs),
+              _statChip(
+                  Icons.thermostat_outlined, 'Feels ${w.current.feelsLike.round()}°', cs),
               const SizedBox(width: 8),
               _statChip(Icons.water_drop_outlined, '${w.current.humidity}%', cs),
               const SizedBox(width: 8),
-              _statChip(Icons.air, '${w.current.windSpeed.round()} km/h', cs),
+              _statChip(
+                  Icons.air, '${w.current.windSpeed.round()} km/h', cs),
             ],
           ),
           const SizedBox(height: 20),
           Align(
             alignment: Alignment.centerLeft,
-            child: Text('7-DAY FORECAST', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontSize: 11, letterSpacing: 1)),
+            child: Text(
+              '7-DAY FORECAST',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontSize: 11, letterSpacing: 1),
+            ),
           ),
           const SizedBox(height: 8),
           ...w.daily.map((d) => _dailyRow(d, cs)),
@@ -149,6 +294,107 @@ class _WeatherScreenState extends State<WeatherScreen> {
       ),
     );
   }
+
+  // ─── Locations ──────────────────────────────────────────────
+
+  Widget _locationsTab(ColorScheme cs) {
+    final gold = cs.primary;
+    final store = WeatherLocations.instance;
+    return ValueListenableBuilder<List<GeoLocation>>(
+      valueListenable: store.starred,
+      builder: (context, starred, _) => ValueListenableBuilder<List<GeoLocation>>(
+        valueListenable: store.history,
+        builder: (context, history, _) {
+          if (starred.isEmpty && history.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.star_border,
+                      size: 56, color: cs.onSurface.withAlpha(60)),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Star a place and it waits here',
+                    style: TextStyle(color: cs.onSurface.withAlpha(120)),
+                  ),
+                ],
+              ),
+            );
+          }
+          return ListView(
+            padding: const EdgeInsets.only(bottom: 24),
+            children: [
+              if (starred.isNotEmpty) ...[
+                _sectionLabel('STARRED'),
+                for (final loc in starred)
+                  _locationRow(loc, starred: true, cs: cs, gold: gold),
+              ],
+              if (history.isNotEmpty) ...[
+                _sectionLabel('RECENT'),
+                for (final loc in history)
+                  _locationRow(loc, starred: false, cs: cs, gold: gold),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                  child: Text(
+                    'Your last ${WeatherLocations.maxHistory} visits, '
+                    'minus the ones you starred.',
+                    style:
+                        TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(120)),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _locationRow(
+    GeoLocation loc, {
+    required bool starred,
+    required ColorScheme cs,
+    required Color gold,
+  }) {
+    return ListTile(
+      key: ValueKey('weather-row-${loc.name}'),
+      leading: const Icon(Icons.location_on_outlined, size: 18),
+      title: Text(loc.name, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(
+        loc.displayName,
+        style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(120)),
+      ),
+      trailing: IconButton(
+        key: ValueKey('weather-star-${loc.name}'),
+        tooltip: starred ? 'Remove from starred' : 'Star this place',
+        onPressed: () => WeatherLocations.instance.toggleStar(loc),
+        icon: Icon(
+          starred ? Icons.star : Icons.star_border,
+          color: starred ? gold : cs.onSurface.withAlpha(140),
+          size: 20,
+        ),
+      ),
+      onTap: () => _openSaved(loc),
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          letterSpacing: 1.2,
+          fontWeight: FontWeight.w800,
+          color: cs.onSurface.withAlpha(150),
+        ),
+      ),
+    );
+  }
+
+  // ─── Weather cards ──────────────────────────────────────────
 
   Widget _statChip(IconData icon, String text, ColorScheme cs) {
     return Container(
@@ -160,7 +406,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 14, color: cs.primary),
         const SizedBox(width: 4),
-        Text(text, style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(160))),
+        Text(text,
+            style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(160))),
       ]),
     );
   }
@@ -175,16 +422,41 @@ class _WeatherScreenState extends State<WeatherScreen> {
       ),
       child: Row(
         children: [
-          SizedBox(width: 40, child: Text(d.dayName, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cs.onSurface.withAlpha(160)))),
+          SizedBox(
+            width: 40,
+            child: Text(
+              d.dayName,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: cs.onSurface.withAlpha(160),
+              ),
+            ),
+          ),
           Text(d.icon, style: const TextStyle(fontSize: 20)),
           const SizedBox(width: 8),
-          Expanded(child: Text(d.description, style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(120)), maxLines: 1, overflow: TextOverflow.ellipsis)),
-          Text('${d.maxTemp.round()}°', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface.withAlpha(200))),
+          Expanded(
+            child: Text(
+              d.description,
+              style: TextStyle(
+                  fontSize: 11, color: cs.onSurface.withAlpha(120)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text('${d.maxTemp.round()}°',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface.withAlpha(200))),
           const SizedBox(width: 4),
-          Text('${d.minTemp.round()}°', style: TextStyle(fontSize: 13, color: cs.onSurface.withAlpha(100))),
+          Text('${d.minTemp.round()}°',
+              style: TextStyle(
+                  fontSize: 13, color: cs.onSurface.withAlpha(100))),
           if (d.precipProb > 0) ...[
             const SizedBox(width: 6),
-            Text('💧${d.precipProb}%', style: TextStyle(fontSize: 10, color: cs.primary)),
+            Text('💧${d.precipProb}%',
+                style: TextStyle(fontSize: 10, color: cs.primary)),
           ],
         ],
       ),

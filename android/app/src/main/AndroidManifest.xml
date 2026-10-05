@@ -100,6 +100,14 @@
                 <data android:pathPattern=".*\.cbr"/>
                 <data android:pathPattern=".*\.CBR"/>
             </intent-filter>
+            <!-- A caption or link another app hands us: "Share to Omniversify"
+                 in any share sheet. text/plain is deliberate — photos and
+                 videos have nowhere to go yet. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
         </activity>
         <!-- audio_service: required for media notification / background playback -->
         <service
