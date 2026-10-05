@@ -14,12 +14,14 @@ import 'services/deep_link_service.dart';
 import 'services/interests_service.dart';
 import 'services/mute_service.dart';
 import 'services/open_file_service.dart';
+import 'services/messages_service.dart';
 import 'services/privacy_service.dart';
 import 'services/relationship_service.dart';
 import 'services/share_in_service.dart';
 import 'services/weather_locations.dart';
 import 'services/xp_service.dart';
 import 'widgets/widgets.dart';
+import 'screens/chat_screen.dart';
 import 'screens/scrolls_screen.dart';
 import 'screens/tools_screen.dart';
 import 'screens/settings_screen.dart';
@@ -885,15 +887,6 @@ class _DmsDrawerState extends State<DmsDrawer> {
     final gold = Theme.of(context).colorScheme.primary;
     final cs = Theme.of(context).colorScheme;
 
-    final conversations = [
-      ('Ahmed', '@ahmed_m', 'Sure, let\'s watch it together!', '2m', false),
-      ('Sara', '@sara_dev', 'I just finished the book!', '15m', true),
-      ('Omar', '@omar_92', 'Check this game out', '1h', false),
-      ('Fatima', '@fatima_art', 'The workout was intense 💪', '3h', false),
-      ('Youssef', '@youssef_ma', 'See you tomorrow!', '1d', true),
-      ('Karim', '@karim_w', 'Thanks for the recommendation', '2d', false),
-    ];
-
     return Drawer(
       child: SafeArea(
         child: Column(
@@ -931,34 +924,104 @@ class _DmsDrawerState extends State<DmsDrawer> {
             ),
             Expanded(
               child: _tab == 0
-                  ? ListView.builder(
-                      padding: EdgeInsets.zero,
-                      itemCount: conversations.length,
-                      itemBuilder: (context, index) {
-                        final (name, handle, lastMsg, time, unread) = conversations[index];
-                        return ListTile(
-                          leading: CircleAvatar(
-                            radius: 20,
-                            backgroundColor: gold.withAlpha(30),
-                            child: Text(name[0], style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 14)),
-                          ),
-                          title: Row(
-                            children: [
-                              Expanded(
-                                child: Text(name, style: TextStyle(fontSize: 14, fontWeight: unread ? FontWeight.w700 : FontWeight.w500)),
-                              ),
-                              Text(time, style: TextStyle(fontSize: 11, color: unread ? gold : Theme.of(context).textTheme.bodySmall?.color)),
-                            ],
-                          ),
-                          subtitle: Text(lastMsg, style: TextStyle(fontSize: 12, color: unread ? Theme.of(context).textTheme.bodyMedium?.color : Theme.of(context).textTheme.bodySmall?.color), maxLines: 1, overflow: TextOverflow.ellipsis),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                        );
-                      },
-                    )
+                  ? _messagesList(context, gold, cs)
                   : _acquaintancesList(context, gold, cs),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Every conversation that has something in it, with the last line and
+  /// whoever is still waiting for an answer.
+  Widget _messagesList(BuildContext context, Color gold, ColorScheme cs) {
+    return ValueListenableBuilder<Map<String, List<ChatMessage>>>(
+      valueListenable: MessagesService.instance.threads,
+      builder: (context, threads, _) {
+        final live = MessagesService.people
+            .where((person) =>
+                (threads[person.handle] ?? const <ChatMessage>[])
+                    .isNotEmpty)
+            .toList(growable: false);
+
+        return ValueListenableBuilder<Set<String>>(
+          valueListenable: MessagesService.instance.unread,
+          builder: (context, unread, _) {
+            return ListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: live.length,
+              itemBuilder: (context, index) {
+                final person = live[index];
+                final last = threads[person.handle]!.last;
+                final hasUnread = unread.contains(person.handle);
+                return ListTile(
+                  key: ValueKey('dm-${person.handle}'),
+                  leading: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: gold.withAlpha(30),
+                    child: Text(
+                      person.initial,
+                      style: TextStyle(
+                          color: gold,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14),
+                    ),
+                  ),
+                  title: Row(
+                    children: [
+                      Expanded(
+                        child: Text(person.name,
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: hasUnread
+                                    ? FontWeight.w700
+                                    : FontWeight.w500)),
+                      ),
+                      Text(last.when,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: hasUnread
+                                  ? gold
+                                  : Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.color)),
+                    ],
+                  ),
+                  subtitle: Text(last.text,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: hasUnread
+                              ? Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.color
+                              : Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.color),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  onTap: () => _openChat(context, person.handle, person.name),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Closes the drawer and opens that conversation over it.
+  void _openChat(BuildContext context, String handle, String name) {
+    final navigator = Navigator.of(context);
+    Scaffold.of(context).closeEndDrawer();
+    navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChatScreen(handle: handle, name: name),
       ),
     );
   }
@@ -1029,6 +1092,7 @@ class _DmsDrawerState extends State<DmsDrawer> {
         sectionLabel('ACQUAINTED'),
         for (final (name, handle, note) in _acquaintances)
           ListTile(
+            key: ValueKey('acq-$handle'),
             leading: CircleAvatar(
               radius: 20,
               backgroundColor: gold.withAlpha(30),
@@ -1042,6 +1106,7 @@ class _DmsDrawerState extends State<DmsDrawer> {
             ),
             subtitle: Text(note, style: TextStyle(fontSize: 12, color: cs.onSurface.withAlpha(150))),
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            onTap: () => _openChat(context, handle, name),
           ),
         const SizedBox(height: 16),
       ],

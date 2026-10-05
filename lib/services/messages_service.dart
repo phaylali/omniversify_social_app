@@ -31,6 +31,10 @@ class ChatMessage {
     return '${hours ~/ 24}d';
   }
 
+  /// Wall-clock time of the message, as the chat shows it: `21:04`.
+  String get clock =>
+      '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
+
   Map<String, dynamic> toJson() => {
         'text': text,
         'fromMe': fromMe,
@@ -62,7 +66,7 @@ class MessagesService {
   static const List<DmPerson> people = [
     DmPerson(name: 'Ahmed', handle: '@ahmed_m'),
     DmPerson(name: 'Sara', handle: '@sara_dev'),
-    DmPerson(name: 'Omar', handle: '@omar_92'),
+    DmPerson(name: 'Omar', handle: '@omar_gamer'),
     DmPerson(name: 'Fatima', handle: '@fatima_art'),
     DmPerson(name: 'Youssef', handle: '@youssef_ma'),
     DmPerson(name: 'Karim', handle: '@karim_w'),
@@ -82,7 +86,7 @@ class MessagesService {
         ChatMessage(
             text: 'I just finished the book!', fromMe: false, at: ago(15)),
       ],
-      '@omar_92': [
+      '@omar_gamer': [
         ChatMessage(text: 'Check this game out', fromMe: false, at: ago(60)),
       ],
       '@fatima_art': [
@@ -184,6 +188,24 @@ class MessagesService {
     if (!unread.value.contains(handle)) return;
     final next = {...unread.value}..remove(handle);
     unread.value = next;
+    await _save();
+  }
+
+  /// Long-press → delete: the one message goes, the rest stay.
+  Future<void> remove(String handle, ChatMessage message) async {
+    await init();
+    final next = {...threads.value};
+    next[handle] = thread(handle).where((m) => !identical(m, message)).toList();
+    threads.value = next;
+    await _save();
+  }
+
+  /// The conversation menu's "clear conversation": empty, but still there.
+  Future<void> clear(String handle) async {
+    await init();
+    final next = {...threads.value};
+    next[handle] = <ChatMessage>[];
+    threads.value = next;
     await _save();
   }
 

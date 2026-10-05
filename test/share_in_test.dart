@@ -17,7 +17,7 @@ void main() {
     test('the same link goes into every conversation that was picked',
         () async {
       await MessagesService.instance.shareTo(
-        const ['@amina_stream', '@omar_92'],
+        const ['@amina_stream', '@omar_gamer'],
         'https://omniversify.com/c/42',
       );
 
@@ -25,7 +25,7 @@ void main() {
       expect(amina.text, 'https://omniversify.com/c/42');
       expect(amina.fromMe, isTrue);
       // Omar's conversation had a message before, so the share joins it.
-      final omar = MessagesService.instance.thread('@omar_92');
+      final omar = MessagesService.instance.thread('@omar_gamer');
       expect(omar, hasLength(2));
       expect(omar.last.text, 'https://omniversify.com/c/42');
       expect(omar.first.fromMe, isFalse);
@@ -105,12 +105,12 @@ void main() {
       // Nothing picked: sending is not possible yet.
       await tester.tap(find.byKey(const ValueKey('share-send')));
       await tester.pump();
-      expect(MessagesService.instance.thread('@omar_92'), hasLength(1));
+      expect(MessagesService.instance.thread('@omar_gamer'), hasLength(1));
 
       await tester
           .tap(find.byKey(const ValueKey('share-person-@amina_stream')));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('share-person-@omar_92')));
+      await tester.tap(find.byKey(const ValueKey('share-person-@omar_gamer')));
       await tester.pump();
 
       expect(find.text('2 selected'), findsOneWidget);
@@ -128,7 +128,7 @@ void main() {
         'https://reels.example.com/x',
       );
       expect(
-        MessagesService.instance.thread('@omar_92').last.fromMe,
+        MessagesService.instance.thread('@omar_gamer').last.fromMe,
         isTrue,
       );
       // Nobody else was picked.
