@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../core/services/media_api.dart';
 import '../services/episode_tracker_service.dart';
+import '../services/tracker_collection_service.dart';
 import '../widgets/action_sheet.dart';
 
 const List<String> _months = [
@@ -36,6 +37,49 @@ String? airDateText(String? raw) {
   if (month < 1 || month > _months.length) return value;
   return '${int.parse(iso.group(3)!)} ${_months[month - 1]} ${iso.group(1)}';
 }
+
+/// The air date as a calendar day, or null when the API left it blank,
+/// wrote 'TBA', or wrote something this app cannot read.
+DateTime? airDateOf(String? raw) {
+  if (raw == null) return null;
+  final value = raw.trim();
+  if (value.isEmpty || value.toUpperCase() == 'TBA') return null;
+  final iso = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$').firstMatch(value);
+  if (iso == null) return null;
+  return DateTime(
+    int.parse(iso.group(1)!),
+    int.parse(iso.group(2)!),
+    int.parse(iso.group(3)!),
+  );
+}
+
+/// Today as a calendar day, so dates compare day to day rather than to the
+/// hour the page happens to be opened.
+DateTime today() {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day);
+}
+
+/// Whether an episode can be ticked off: it has aired, which means its date
+/// is today or earlier. An episode with no readable date counts as aired —
+/// an unfilled field must never lock a checkmark away.
+bool isAired(String? date) {
+  final air = airDateOf(date);
+  if (air == null) return true;
+  return !air.isAfter(today());
+}
+
+/// Whole days from today until the episode airs — 1 for tomorrow. Null once
+/// it has aired (or when there is no date to wait on).
+int? daysUntilAired(String? date) {
+  final air = airDateOf(date);
+  if (air == null) return null;
+  final days = air.difference(today()).inDays;
+  return days > 0 ? days : null;
+}
+
+/// 'in 5 days' — the countdown under an episode that has not aired yet.
+String daysLeftText(int days) => days == 1 ? 'in 1 day' : 'in $days days';
 
 /// One episode as the tracking page sees it — however much of the API
 /// filled in. The season map often holds nothing but numbers, sometimes a
@@ -419,14 +463,20 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
     final total = episodes.length;
     final done = episodes.where((e) => seen.contains(e.key)).length;
 
-    SeriesEpisode? next;
+    // What you can tick next is the first episode that has actually aired;
+    // when every remaining one is still in the future, that is what the page
+    // waits for instead.
+    SeriesEpisode? firstUnticked;
+    SeriesEpisode? nextAired;
     for (final ep in episodes) {
-      if (!seen.contains(ep.key)) {
-        next = ep;
-        break;
-      }
+      if (seen.contains(ep.key)) continue;
+      firstUnticked ??= ep;
+      if (nextAired == null && isAired(ep.date)) nextAired = ep;
+      if (nextAired != null) break;
     }
-    final nextEpisode = next;
+    final nextEpisode = nextAired ?? firstUnticked;
+    final nextCountdown =
+        nextAired == null ? daysUntilAired(firstUnticked?.date) : null;
 
     return Container(
       key: const ValueKey('track-progress'),
@@ -519,21 +569,31 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                FilledButton.tonalIcon(
-                  key: const ValueKey('mark-next'),
-                  onPressed: () => EpisodeTrackerService.instance.setEpisode(
-                    _series,
-                    nextEpisode.key,
-                    true,
+                if (nextCountdown == null)
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('mark-next'),
+                    onPressed: () => _setEpisode(nextEpisode.key, true),
+                    icon: const Icon(Icons.check, size: 16),
+                    label: const Text('Mark watched'),
+                    style: FilledButton.styleFrom(
+                      foregroundColor: widget.accent,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                    ),
+                  )
+                else
+                  Padding(
+                    key: const ValueKey('next-countdown'),
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Text(
+                      daysLeftText(nextCountdown),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: widget.accent,
+                      ),
+                    ),
                   ),
-                  icon: const Icon(Icons.check, size: 16),
-                  label: const Text('Mark watched'),
-                  style: FilledButton.styleFrom(
-                    foregroundColor: widget.accent,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                  ),
-                ),
               ],
             ),
         ],
@@ -549,7 +609,10 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
     Set<String> seen,
   ) {
     final done = episodes.where((e) => seen.contains(e.key)).length;
-    final all = done == episodes.length;
+    // Only episodes that have aired can be marked as a batch — the season
+    // button never ticks a box that has not opened yet.
+    final aired = episodes.where((e) => isAired(e.date)).toList();
+    final all = aired.isNotEmpty && aired.every((e) => seen.contains(e.key));
     final label = _seasonLabel(episodes.first.seasonNumber);
 
     return Padding(
@@ -583,17 +646,17 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
                     : 'Mark the whole season watched',
                 visualDensity: VisualDensity.compact,
                 icon: Icon(
-                  all ? Icons.playlist_remove : Icons.playlist_add_check,
+                  all || aired.isEmpty
+                      ? Icons.playlist_remove
+                      : Icons.playlist_add_check,
                   size: 20,
-                  color: all
+                  color: all || aired.isEmpty
                       ? Theme.of(context).textTheme.bodySmall?.color
                       : widget.accent,
                 ),
-                onPressed: () => EpisodeTrackerService.instance.setSeason(
-                  _series,
-                  episodes.map((e) => e.key),
-                  !all,
-                ),
+                onPressed: aired.isEmpty
+                    ? null
+                    : () => _setSeason(aired.map((e) => e.key), !all),
               ),
             ],
           ),
@@ -606,20 +669,32 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
 
   Widget _episodeRow(SeriesEpisode ep, bool watched) {
     final date = airDateText(ep.date);
-    final subtitle = (date == null && ep.description == null)
+    final countdown = daysUntilAired(ep.date);
+    final airLine = countdown == null
+        ? date
+        : [
+            ?date,
+            daysLeftText(countdown),
+          ].join(' · ');
+    final muted = Theme.of(context).textTheme.bodySmall?.color;
+
+    final subtitle = (airLine == null && ep.description == null)
         ? null
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (date != null)
+              if (airLine != null)
                 Text(
-                  date,
+                  airLine,
+                  key: countdown == null ? null : const ValueKey('ep-countdown'),
                   style: TextStyle(
                     fontSize: 12,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
+                    fontWeight:
+                        countdown == null ? FontWeight.w400 : FontWeight.w700,
+                    color: countdown == null ? muted : widget.accent,
                   ),
                 ),
-              if (date != null && ep.description != null)
+              if (airLine != null && ep.description != null)
                 const SizedBox(height: 2),
               if (ep.description != null)
                 Text(
@@ -629,7 +704,7 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.35,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
+                    color: muted,
                   ),
                 ),
             ],
@@ -638,11 +713,10 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
     return CheckboxListTile(
       key: ValueKey('ep-${ep.key}'),
       value: watched,
-      onChanged: (value) => EpisodeTrackerService.instance.setEpisode(
-        _series,
-        ep.key,
-        value ?? false,
-      ),
+      // Not aired yet: the box is there to look at, not to tick.
+      onChanged: isAired(ep.date)
+          ? (value) => _setEpisode(ep.key, value ?? false)
+          : null,
       controlAffinity: ListTileControlAffinity.leading,
       contentPadding: EdgeInsets.zero,
       dense: true,
@@ -661,6 +735,41 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
     );
   }
 
+  // ─── Ticking ──────────────────────────────────────────────
+
+  /// One box, and then the shelf the series belongs on catches up: the first
+  /// tick puts it on Watching, the last one carries it to Watched.
+  Future<void> _setEpisode(String episode, bool value) async {
+    await EpisodeTrackerService.instance.setEpisode(_series, episode, value);
+    await _syncCollection();
+  }
+
+  Future<void> _setSeason(Iterable<String> episodes, bool value) async {
+    await EpisodeTrackerService.instance.setSeason(_series, episodes, value);
+    await _syncCollection();
+  }
+
+  /// Checkmarks decide where a series sits — a show nobody put anywhere
+  /// still appears in Watching the moment its first episode is ticked, and
+  /// moves itself to Watched once every episode has been seen. An empty
+  /// store leaves whatever the detail dialog chose alone.
+  Future<void> _syncCollection() async {
+    final episodes = _episodes;
+    if (episodes == null || episodes.isEmpty || widget.item['id'] == null) {
+      return;
+    }
+    final seen =
+        EpisodeTrackerService.instance.watched.value[_series] ?? const <String>{};
+    if (seen.isEmpty) return;
+
+    final everyEpisode = episodes.every((e) => seen.contains(e.key));
+    await TrackerCollectionService.instance.add(
+      widget.category,
+      widget.item,
+      everyEpisode ? 'watched' : 'watching',
+    );
+  }
+
   /// 'Season 3 · Episode 12 · The finale' — one line, digits as digits.
   String _episodeLabel(SeriesEpisode ep) {
     final title = ep.title;
@@ -675,6 +784,10 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
 
   void _openMenu() {
     final episodes = _episodes ?? const <SeriesEpisode>[];
+    // An un-aired episode has nothing to tick yet, so "every episode" means
+    // every episode that is out.
+    final aired = episodes.where((e) => isAired(e.date)).toList();
+    final waiting = episodes.length - aired.length;
     showActionSheet(
       context,
       title: 'Episode tracking',
@@ -685,14 +798,13 @@ class _SeriesTrackingScreenState extends State<SeriesTrackingScreen> {
         ActionSheetItem(
           icon: Icons.done_all,
           title: 'Mark every episode watched',
-          subtitle: '${episodes.length} episodes ticked in one go',
-          onTap: episodes.isEmpty
+          subtitle: waiting == 0
+              ? '${episodes.length} episodes ticked in one go'
+              : '${aired.length} of ${episodes.length} ticked in one go · '
+                  '$waiting not aired yet',
+          onTap: aired.isEmpty
               ? null
-              : () => EpisodeTrackerService.instance.setSeason(
-                    _series,
-                    episodes.map((e) => e.key),
-                    true,
-                  ),
+              : () => _setSeason(aired.map((e) => e.key), true),
         ),
         ActionSheetItem(
           icon: Icons.delete_outline,

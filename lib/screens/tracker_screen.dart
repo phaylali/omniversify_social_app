@@ -4,11 +4,18 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../core/services/media_api.dart';
 import '../services/episode_tracker_service.dart';
 import '../services/tracker_collection_service.dart';
+import '../services/tracker_tabs.dart';
+import '../widgets/action_sheet.dart';
 import '../widgets/app_logo.dart';
 import 'series_tracking_screen.dart';
+import 'upcoming_tab.dart';
 
-/// A generic tracker screen with three tabs: Discover, Wishlist, Library.
-/// Discover fetches live data from the omniversify-api backend as a grid.
+/// The tracker screen: Discovery first, then whichever tabs this category
+/// actually keeps — series get Upcoming / Watching / Watched, games travel
+/// Wishlist → Owned → Played, music swaps collections for playlists.
+///
+/// Which is which lives in `tracker_tabs.dart`; Discovery always fetches
+/// live data from the omniversify-api backend as a grid.
 
 class TrackerScreen extends StatefulWidget {
   final String title;
@@ -34,11 +41,13 @@ class _TrackerScreenState extends State<TrackerScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   late final Color _accent;
+  late final TrackerTabs _tabs;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabs = trackerTabsFor(widget.apiCategory);
+    _tabController = TabController(length: _tabs.labels.length, vsync: this);
     _accent = widget.accentColor ?? const Color(0xFFC2B067);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) setState(() {});
@@ -76,6 +85,11 @@ class _TrackerScreenState extends State<TrackerScreen>
         centerTitle: true,
         bottom: TabBar(
           controller: _tabController,
+          // Four tabs do not fit side by side on a phone: the strip scrolls,
+          // and starts flush at the left rather than indented 52px.
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 8),
           indicatorColor: _accent,
           indicatorWeight: 2,
           labelColor: _accent,
@@ -83,52 +97,52 @@ class _TrackerScreenState extends State<TrackerScreen>
           labelStyle:
               const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           unselectedLabelStyle: const TextStyle(fontSize: 12),
-          tabs: const [
-            Tab(text: 'Discover'),
-            Tab(text: 'Wishlist'),
-            Tab(text: 'Library'),
-          ],
+          tabs: [for (final label in _tabs.labels) Tab(text: label)],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _DiscoverGrid(
-            apiCategory: widget.apiCategory,
-            accent: _accent,
-            title: widget.title,
-          ),
-          if (widget.apiCategory != null)
-            _CollectionTab(
-              apiCategory: widget.apiCategory!,
-              accent: _accent,
-              title: widget.title,
-              wishlist: true,
-            )
-          else
-            _PlaceholderTab(
-              accent: _accent,
-              title: widget.title,
-              icon: Icons.favorite_outline,
-              message: 'Your ${widget.title} wishlist is empty',
-            ),
-          if (widget.apiCategory != null)
-            _CollectionTab(
-              apiCategory: widget.apiCategory!,
-              accent: _accent,
-              title: widget.title,
-              wishlist: false,
-            )
-          else
-            _PlaceholderTab(
-              accent: _accent,
-              title: widget.title,
-              icon: Icons.bookmark_outline,
-              message: 'Your ${widget.title} library is empty',
-            ),
-        ],
+        children: _tabChildren(),
       ),
     );
+  }
+
+  /// One child per tab label, in the same order the TabBar was built.
+  List<Widget> _tabChildren() {
+    final category = widget.apiCategory;
+    return [
+      _DiscoverGrid(
+        apiCategory: category,
+        accent: _accent,
+        title: widget.title,
+      ),
+      if (_tabs.upcoming && category != null)
+        UpcomingTab(
+          apiCategory: category,
+          accent: _accent,
+          title: widget.title,
+        ),
+      for (final slot in _tabs.slots)
+        category == null
+            ? _PlaceholderTab(
+                accent: _accent,
+                title: widget.title,
+                icon: slot.icon,
+                message: slot.empty,
+              )
+            : _CollectionTab(
+                apiCategory: category,
+                accent: _accent,
+                title: widget.title,
+                slot: slot,
+              ),
+      if (_tabs.playlists && category != null)
+        PlaylistsTab(
+          apiCategory: category,
+          accent: _accent,
+          title: widget.title,
+        ),
+    ];
   }
 }
 
@@ -721,19 +735,19 @@ class _DiscoverGridState extends State<_DiscoverGrid>
   }
 }
 
-// ─── Collection tab (Wishlist / Library) ────────────────────
+// ─── Collection tab (one shelf of the category) ─────────────
 
 class _CollectionTab extends StatefulWidget {
   final String apiCategory;
   final Color accent;
   final String title;
-  final bool wishlist;
+  final TrackerSlot slot;
 
   const _CollectionTab({
     required this.apiCategory,
     required this.accent,
     required this.title,
-    required this.wishlist,
+    required this.slot,
   });
 
   @override
@@ -756,7 +770,7 @@ class _CollectionTabState extends State<_CollectionTab>
 
   Future<void> _reload() async {
     final items = await TrackerCollectionService.instance
-        .itemsFor(widget.apiCategory, widget.wishlist);
+        .itemsFor(widget.apiCategory, widget.slot.id);
     if (!mounted) return;
     setState(() {
       _items = List.of(items);
@@ -777,11 +791,8 @@ class _CollectionTabState extends State<_CollectionTab>
       return _PlaceholderTab(
         accent: widget.accent,
         title: widget.title,
-        icon:
-            widget.wishlist ? Icons.favorite_outline : Icons.bookmark_outline,
-        message: widget.wishlist
-            ? 'Your ${widget.title} wishlist is empty'
-            : 'Your ${widget.title} library is empty',
+        icon: widget.slot.icon,
+        message: widget.slot.empty,
       );
     }
 
@@ -1073,27 +1084,28 @@ class _MediaDetailDialogState extends State<_MediaDetailDialog> {
   late Map<String, dynamic> _item;
   bool _loadingDetail = true;
   bool _detailFailed = false;
-  bool _inWishlist = false;
-  bool _inLibrary = false;
+
+  /// Which shelf of this category the item sits on, by slot id.
+  final Map<String, bool> _flags = {};
+  late final TrackerTabs _tabs;
 
   @override
   void initState() {
     super.initState();
+    _tabs = trackerTabsFor(widget.category);
     _item = Map<String, dynamic>.from(widget.item);
     _loadFlags();
     _loadDetail();
   }
 
   Future<void> _loadFlags() async {
-    final inWishlist =
-        await widget.collection.contains(widget.category, _item['id'], true);
-    final inLibrary =
-        await widget.collection.contains(widget.category, _item['id'], false);
+    final flags = <String, bool>{};
+    for (final slot in _tabs.slots) {
+      flags[slot.id] = await widget.collection
+          .contains(widget.category, _item['id'], slot.id);
+    }
     if (!mounted) return;
-    setState(() {
-      _inWishlist = inWishlist;
-      _inLibrary = inLibrary;
-    });
+    setState(() => _flags.addAll(flags));
   }
 
   Future<void> _loadDetail() async {
@@ -1123,31 +1135,77 @@ class _MediaDetailDialogState extends State<_MediaDetailDialog> {
     }
   }
 
-  Future<void> _toggle(bool wishlist) async {
-    final added = await widget.collection.toggle(
-      widget.category,
-      _item,
-      wishlist,
-    );
+  Future<void> _toggle(TrackerSlot slot) async {
+    final added =
+        await widget.collection.toggle(widget.category, _item, slot.id);
     if (!mounted) return;
+    // Shelves are exclusive: filling one empties the rest.
     setState(() {
-      if (wishlist) {
-        _inWishlist = added;
-      } else {
-        _inLibrary = added;
+      for (final other in _tabs.slots) {
+        _flags[other.id] = other.id == slot.id ? added : false;
       }
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          added
-              ? (wishlist ? 'Added to wishlist' : 'Added to library')
-              : (wishlist ? 'Removed from wishlist' : 'Removed from library'),
+          added ? 'Added to ${slot.label}' : 'Removed from ${slot.label}',
         ),
         duration: const Duration(seconds: 1),
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  // ─── Music: playlists ─────────────────────────────────────
+
+  Future<void> _pickPlaylist() async {
+    final names = await widget.collection.playlists();
+    final counts = <String, int>{
+      for (final name in names) name: await widget.collection.playlistCount(name),
+    };
+    if (!mounted) return;
+
+    showActionSheet(
+      context,
+      title: 'Add to playlist',
+      subtitle: _title,
+      icon: Icons.playlist_add,
+      items: [
+        for (final name in names)
+          ActionSheetItem(
+            icon: Icons.playlist_play,
+            title: name,
+            subtitle: '${counts[name]} ${counts[name] == 1 ? 'track' : 'tracks'}',
+            onTap: () => _addToPlaylist(name),
+          ),
+        ActionSheetItem(
+          icon: Icons.add,
+          title: 'New playlist',
+          subtitle: 'Start an empty playlist',
+          onTap: _newPlaylist,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _addToPlaylist(String name) async {
+    final added = await widget.collection.addToPlaylist(name, _item);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(added ? 'Added to $name' : 'Already in $name'),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _newPlaylist() async {
+    final name = await promptPlaylistName(context, accent: widget.accent);
+    if (name == null || !mounted) return;
+    await widget.collection.createPlaylist(name);
+    if (!mounted) return;
+    await _addToPlaylist(name);
   }
 
   String get _title {
@@ -1405,29 +1463,29 @@ class _MediaDetailDialogState extends State<_MediaDetailDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Row(
                 children: [
-                  Expanded(
-                    child: _DetailActionButton(
-                      label: _inWishlist ? 'In Wishlist' : 'Wishlist',
-                      icon: _inWishlist
-                          ? Icons.favorite
-                          : Icons.favorite_outline,
-                      active: _inWishlist,
-                      accent: widget.accent,
-                      onPressed: () => _toggle(true),
+                  for (final slot in _tabs.slots) ...[
+                    Expanded(
+                      child: _DetailActionButton(
+                        label: slot.label,
+                        icon: _flags[slot.id] == true ? Icons.check : slot.icon,
+                        active: _flags[slot.id] == true,
+                        accent: widget.accent,
+                        onPressed: () => _toggle(slot),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _DetailActionButton(
-                      label: _inLibrary ? 'In Library' : 'Library',
-                      icon: _inLibrary
-                          ? Icons.bookmark
-                          : Icons.bookmark_outline,
-                      active: _inLibrary,
-                      accent: widget.accent,
-                      onPressed: () => _toggle(false),
+                    const SizedBox(width: 6),
+                  ],
+                  if (_tabs.playlists)
+                    Expanded(
+                      child: _DetailActionButton(
+                        label: 'Add to playlist',
+                        icon: Icons.playlist_add,
+                        active: false,
+                        accent: widget.accent,
+                        onPressed: _pickPlaylist,
+                      ),
                     ),
-                  ),
+                  const Spacer(),
                   IconButton(
                     tooltip: 'Close',
                     icon: const Icon(Icons.close, size: 18),
@@ -1799,6 +1857,361 @@ class _PlaceholderTab extends StatelessWidget {
                   color: accent.withAlpha(120),
                 ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Playlists (music) ──────────────────────────────────────
+
+/// Asks what to call a new playlist; null when the dialog was dismissed or
+/// nothing worth keeping was typed.
+///
+/// The field is owned by the dialog itself, so it outlives this future and is
+/// only disposed once the closing animation has let go of it.
+Future<String?> promptPlaylistName(
+  BuildContext context, {
+  required Color accent,
+}) async {
+  final name = await showDialog<String>(
+    context: context,
+    builder: (_) => _PlaylistNameDialog(accent: accent),
+  );
+  final clean = name?.trim();
+  if (clean == null || clean.isEmpty) return null;
+  return clean;
+}
+
+class _PlaylistNameDialog extends StatefulWidget {
+  const _PlaylistNameDialog({required this.accent});
+
+  final Color accent;
+
+  @override
+  State<_PlaylistNameDialog> createState() => _PlaylistNameDialogState();
+}
+
+class _PlaylistNameDialogState extends State<_PlaylistNameDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New playlist'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(hintText: 'Playlist name'),
+        onSubmitted: (value) => Navigator.of(context).pop(value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(foregroundColor: widget.accent),
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('Create'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The Playlists tab: every playlist you have, how big it is, and a way to
+/// start another.
+class PlaylistsTab extends StatefulWidget {
+  const PlaylistsTab({
+    super.key,
+    required this.apiCategory,
+    required this.accent,
+    required this.title,
+  });
+
+  final String apiCategory;
+  final Color accent;
+  final String title;
+
+  @override
+  State<PlaylistsTab> createState() => _PlaylistsTabState();
+}
+
+class _PlaylistsTabState extends State<PlaylistsTab>
+    with AutomaticKeepAliveClientMixin {
+  List<String> _names = [];
+  final Map<String, int> _counts = {};
+  bool _loading = true;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final collection = TrackerCollectionService.instance;
+    final names = await collection.playlists();
+    final counts = <String, int>{};
+    for (final name in names) {
+      counts[name] = await collection.playlistCount(name);
+    }
+    if (!mounted) return;
+    setState(() {
+      _names = List.of(names);
+      _counts
+        ..clear()
+        ..addAll(counts);
+      _loading = false;
+    });
+  }
+
+  Future<void> _create() async {
+    final name = await promptPlaylistName(context, accent: widget.accent);
+    if (name == null || !mounted) return;
+    await TrackerCollectionService.instance.createPlaylist(name);
+    if (mounted) await _reload();
+  }
+
+  void _options(String name) {
+    showActionSheet(
+      context,
+      title: name,
+      subtitle: '${_counts[name] ?? 0} tracks',
+      icon: Icons.queue_music,
+      items: [
+        ActionSheetItem(
+          icon: Icons.delete_outline,
+          title: 'Delete playlist',
+          subtitle: 'The tracks themselves are not touched',
+          tone: ActionSheetTone.destructive,
+          onTap: () async {
+            await TrackerCollectionService.instance.deletePlaylist(name);
+            if (mounted) await _reload();
+          },
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (_loading) {
+      return Center(
+        child: CircularProgressIndicator(color: widget.accent, strokeWidth: 2),
+      );
+    }
+    // The "New playlist" row is the point of an empty tab, so the list is
+    // always shown — a message sits under it instead of in front of it.
+    final empty = _names.isEmpty;
+
+    return RefreshIndicator(
+      color: widget.accent,
+      onRefresh: _reload,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+        children: [
+          ListTile(
+            key: const ValueKey('new-playlist'),
+            leading: Icon(Icons.add, color: widget.accent),
+            title: const Text('New playlist'),
+            onTap: _create,
+          ),
+          const Divider(height: 1),
+          if (empty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+              child: Text(
+                'No playlists yet — name one here, then add tracks to it '
+                'from any track you open.',
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+              ),
+            ),
+          for (final name in _names)
+            ListTile(
+              key: ValueKey('playlist-$name'),
+              leading: Icon(Icons.queue_music, color: widget.accent),
+              title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                '${_counts[name] ?? 0} '
+                '${_counts[name] == 1 ? 'track' : 'tracks'}',
+              ),
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              onTap: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PlaylistScreen(
+                      name: name,
+                      apiCategory: widget.apiCategory,
+                      accent: widget.accent,
+                    ),
+                  ),
+                );
+                if (mounted) await _reload();
+              },
+              onLongPress: () => _options(name),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One playlist: its tracks as the same cards Discovery uses, with the way
+/// to take one back out (long press).
+class PlaylistScreen extends StatefulWidget {
+  const PlaylistScreen({
+    super.key,
+    required this.name,
+    required this.apiCategory,
+    required this.accent,
+  });
+
+  final String name;
+  final String apiCategory;
+  final Color accent;
+
+  @override
+  State<PlaylistScreen> createState() => _PlaylistScreenState();
+}
+
+class _PlaylistScreenState extends State<PlaylistScreen> {
+  List<Map<String, dynamic>> _items = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final items = await TrackerCollectionService.instance
+        .playlistItems(widget.name);
+    if (!mounted) return;
+    setState(() {
+      _items = List.of(items);
+      _loading = false;
+    });
+  }
+
+  void _options(Map<String, dynamic> item) {
+    final title = (item['title'] ?? item['name'] ?? '').toString();
+    showActionSheet(
+      context,
+      title: title.isEmpty ? widget.name : title,
+      subtitle: 'In ${widget.name}',
+      icon: Icons.music_note,
+      items: [
+        ActionSheetItem(
+          icon: Icons.remove_circle_outline,
+          title: 'Remove from playlist',
+          subtitle: 'The track itself is not touched',
+          tone: ActionSheetTone.destructive,
+          onTap: () async {
+            await TrackerCollectionService.instance
+                .removeFromPlaylist(widget.name, item['id']);
+            if (mounted) await _reload();
+          },
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        actions: [
+          IconButton(
+            key: const ValueKey('delete-playlist'),
+            tooltip: 'Delete playlist',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () async {
+              await TrackerCollectionService.instance
+                  .deletePlaylist(widget.name);
+              if (context.mounted) Navigator.of(context).pop();
+            },
+          ),
+        ],
+      ),
+      body: _body(),
+    );
+  }
+
+  Widget _body() {
+    if (_loading) {
+      return Center(
+        child: CircularProgressIndicator(color: widget.accent, strokeWidth: 2),
+      );
+    }
+    if (_items.isEmpty) {
+      return _PlaceholderTab(
+        accent: widget.accent,
+        title: widget.name,
+        icon: Icons.queue_music_outlined,
+        message: 'Nothing in this playlist yet',
+      );
+    }
+
+    return RefreshIndicator(
+      color: widget.accent,
+      onRefresh: _reload,
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                childAspectRatio: 0.55,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final item = _items[index];
+                  return GestureDetector(
+                    onLongPress: () => _options(item),
+                    child: _MediaCard(
+                      item: item,
+                      category: widget.apiCategory,
+                      accent: widget.accent,
+                      onTap: () async {
+                        await showMediaDetailDialog(
+                          context: context,
+                          category: widget.apiCategory,
+                          item: item,
+                          accent: widget.accent,
+                          collection: TrackerCollectionService.instance,
+                        );
+                        if (mounted) await _reload();
+                      },
+                    ),
+                  );
+                },
+                childCount: _items.length,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
     );
