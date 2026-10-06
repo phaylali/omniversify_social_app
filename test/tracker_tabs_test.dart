@@ -175,7 +175,7 @@ void main() {
         'games', const {'id': 1, 'name': 'Still wished'}, 'wishlist');
 
     final added = await service.addAll('games', [
-      {'id': 2, 'name': 'Portal 2', 'owned_playtime': 12, 'last_played': '2024-05-01'},
+      {'id': 2, 'name': 'Portal 2', 'owned_minutes': 90, 'last_played': '2024-05-01'},
       {'id': 3, 'name': 'Hades'},
       {'id': 3, 'name': 'Hades again'},  // the same game, twice in the batch
     ], 'owned');
@@ -184,8 +184,8 @@ void main() {
     expect(added, 2);
     final owned = await service.itemsFor('games', 'owned');
     expect(owned.map((e) => e['id']).toList(), [2, 3]);
-    // Hours and the last evening with it travel with the game.
-    expect(owned.first['owned_playtime'], 12);
+    // The minutes with it, and the last evening, travel with the game.
+    expect(owned.first['owned_minutes'], 90);
     expect(owned.first['last_played'], '2024-05-01');
     // Anything the import did not mention keeps its own shelf.
     expect(await service.contains('games', 1, 'wishlist'), isTrue);
@@ -614,6 +614,40 @@ void main() {
     expect(find.byKey(profileField), findsOneWidget);
     expect(await TrackerCollectionService.instance.itemsFor('games', 'owned'),
         isEmpty);
+  });
+
+  testWidgets('the Owned shelf says how long you have really had a game',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await TrackerCollectionService.instance.addAll('games', const [
+      {'id': 1, 'name': 'Long Loved', 'owned_minutes': 90},
+      {'id': 2, 'name': 'Barely Touched', 'owned_minutes': 20},
+      {'id': 3, 'name': 'Untouched', 'owned_minutes': 0},
+      {'id': 4, 'name': 'Never Told Us'},
+    ], 'owned');
+
+    await tester.pumpWidget(const MaterialApp(
+      home: TrackerScreen(
+        title: 'Games',
+        icon: Icons.sports_esports_outlined,
+        accentColor: Color(0xFF107C10),
+        apiCategory: 'games',
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tapTab(tester, 'Owned');
+
+    expect(find.text('1.5 h played'), findsOneWidget);
+    expect(find.text('20 min played'), findsOneWidget);
+    // Only Steam saying zero gets to say this — and nothing is claimed
+    // where Steam told us nothing at all.
+    expect(find.text('Never played'), findsOneWidget);
+    expect(find.textContaining('played'), findsNWidgets(3));
   });
 
   testWidgets('Integrations is honest about what each service offers',

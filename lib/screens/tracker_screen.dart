@@ -960,9 +960,34 @@ class _MediaCard extends StatelessWidget {
                 color: Theme.of(context).textTheme.bodySmall?.color,
               ),
             ),
+          if (_played.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              _played,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: accent ?? Theme.of(context).colorScheme.primary,
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// What Steam says about the time spent on it, said the way a person
+  /// would — and "never played" only when Steam really said zero.
+  String get _played {
+    final raw = item['owned_minutes'];
+    if (raw is! num) return '';
+    final minutes = raw.round();
+    if (minutes <= 0) return 'Never played';
+    if (minutes < 60) return '$minutes min played';
+    if (minutes % 60 == 0) return '${minutes ~/ 60} h played';
+    return '${(minutes / 60).toStringAsFixed(1)} h played';
   }
 
   String _getTitle() {

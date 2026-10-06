@@ -375,8 +375,8 @@ class TrackerCollectionService {
       'summary',
       'synopsis',
       'description',
-      // Steam's side of the shelf: hours with it, last time it was opened.
-      'owned_playtime',
+      // Steam's side of the shelf: how long with it, last time it opened.
+      'owned_minutes',
       'last_played',
       'steam_id',
     };
