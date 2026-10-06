@@ -6,6 +6,7 @@ import 'package:omniversify_widget/omniversify_widget.dart';
 import '../data/post_state.dart';
 import '../models/post.dart';
 import '../models/rank.dart';
+import '../services/account_gate.dart';
 import '../services/relationship_service.dart';
 import 'file_image_stub.dart'
     if (dart.library.io) 'file_image.dart';
@@ -656,11 +657,15 @@ class _CommentInputState extends ConsumerState<_CommentInput> {
     }
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final text = _controller.text.trim();
     final imagePath = _imagePath;
     final imageBytes = _imageBytes;
     if (text.isEmpty && imagePath == null && imageBytes == null) return;
+    // A comment is posting too, so it waits for a confirmed email — and
+    // whatever was written stays written if the answer is no.
+    if (!await mayPost(context)) return;
+    if (!mounted) return;
     ref.read(postStateProvider.notifier).addComment(
       widget.postId,
       text,

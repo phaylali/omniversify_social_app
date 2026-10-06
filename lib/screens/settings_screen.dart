@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniversify_widget/omniversify_widget.dart';
 
+import '../core/services/auth_api.dart';
+import '../services/account_service.dart';
 import '../services/privacy_service.dart';
+import 'account_screen.dart';
 import 'integrations_screen.dart';
 import 'privacy_screen.dart';
 
@@ -104,12 +107,21 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           _sectionHeader(context, 'ACCOUNT'),
-          _tile(
-            context,
-            icon: Icons.person_outline,
-            title: 'Account',
-            subtitle: 'Email, password, privacy',
-            onTap: () {},
+          ValueListenableBuilder<Account?>(
+            valueListenable: AccountService.instance.account,
+            builder: (context, account, _) => _tile(
+              context,
+              icon: Icons.person_outline,
+              title: 'Account',
+              subtitle: account == null
+                  ? 'Sign in to post, comment and message'
+                  : account.emailVerified
+                      ? account.email
+                      : '${account.email} — not confirmed yet',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const AccountScreen()),
+              ),
+            ),
           ),
           _tile(
             context,

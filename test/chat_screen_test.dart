@@ -3,8 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:omniversify_social_app/main.dart';
+import 'package:omniversify_social_app/screens/account_screen.dart';
 import 'package:omniversify_social_app/screens/chat_screen.dart';
 import 'package:omniversify_social_app/services/messages_service.dart';
+
+import 'account_fixtures.dart';
 
 /// Opens the DMs drawer the way the menu button does.
 Future<void> _openDrawer(WidgetTester tester) async {
@@ -40,6 +43,9 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     MessagesService.instance.reset();
+    // Sending anything needs a confirmed email now — these tests are about
+    // the thread, not the gate, so they start already signed in.
+    signInForTest();
   });
 
   group('DMs drawer', () {
@@ -130,6 +136,36 @@ void main() {
       // The composer is empty again, and the send button with it.
       expect(find.widgetWithText(TextField, 'On my way'), findsNothing);
       expect(tester.widget<IconButton>(send).onPressed, isNull);
+    });
+
+    testWidgets('sending waits for a confirmed email first', (tester) async {
+      signOutForTest();
+      await MessagesService.instance.init();
+      await _openChat(tester);
+
+      await tester.enterText(find.byType(TextField), 'On my way');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('chat-send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Nothing was sent: the account screen opened instead.
+      expect(find.byType(AccountScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-email')), findsOneWidget);
+      expect(
+        MessagesService.instance
+            .thread('@ahmed_m')
+            .any((m) => m.text == 'On my way'),
+        isFalse,
+      );
+
+      // And the draft is still in the box for when they come back
+      // confirmed: backing out of the screen puts it where it was.
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.widgetWithText(TextField, 'On my way'), findsOneWidget);
+      expect(find.byType(AccountScreen), findsNothing);
     });
 
     testWidgets('the conversation menu can clear it', (tester) async {

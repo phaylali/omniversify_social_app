@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/post.dart';
+import '../services/account_gate.dart';
 import '../widgets/action_sheet.dart';
 
 /// Full-screen placeholder for someone's story.
@@ -121,8 +122,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   ///
   /// Stories have no backend yet, so this confirms the same way the report
   /// actions do rather than pretending to deliver anything.
-  void _sendReply() {
+  Future<void> _sendReply() async {
     if (_reply.text.trim().isEmpty) return;
+    // A reply is a message, and messages wait for a confirmed email.
+    if (!await mayPost(context)) return;
+    if (!mounted) return;
     final handle = widget.users[_index].handle;
     _reply.clear();
     FocusScope.of(context).unfocus();

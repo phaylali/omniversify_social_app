@@ -5,7 +5,11 @@ import 'package:omniversify_social_app/data/dummy_data.dart';
 import 'package:omniversify_social_app/screens/story_viewer_screen.dart';
 import 'package:omniversify_social_app/widgets/stories_row.dart';
 
+import 'account_fixtures.dart';
+
 void main() {
+  tearDown(signOutForTest);
+
   testWidgets('tapping a story opens the placeholder story viewer',
       (tester) async {
     await tester.pumpWidget(
@@ -38,6 +42,8 @@ void main() {
 
   testWidgets('the reply box and the like button keep the story in place',
       (tester) async {
+    // A reply is a message, so the gate needs a confirmed email behind it.
+    signInForTest();
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: StoriesRow())),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import '../core/config/api_config.dart';
+import '../services/account_gate.dart';
 import '../services/messages_service.dart';
 
 /// Instagram-style share sheet:
@@ -82,6 +83,9 @@ class _ShareSheetState extends State<ShareSheet> {
         .map((p) => p.handle)
         .toList(growable: false);
     if (handles.isEmpty) return;
+    // Sending is a message, so it waits for a confirmed email.
+    if (!await mayPost(context)) return;
+    if (!mounted) return;
     final names =
         handles.map(MessagesService.nameFor).toList(growable: false);
     // Written into every picked conversation first, so the words are there

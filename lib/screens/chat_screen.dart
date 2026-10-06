@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/account_gate.dart';
 import '../services/messages_service.dart';
 import '../widgets/action_sheet.dart';
 
@@ -52,6 +53,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _send() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
+    // Posting needs a confirmed email — and whatever was typed stays put
+    // if the person comes back without one.
+    if (!await mayPost(context)) return;
+    if (!mounted) return;
     _input.clear();
     await MessagesService.instance.send(widget.handle, text);
   }

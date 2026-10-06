@@ -7,10 +7,15 @@ import 'package:omniversify_social_app/services/messages_service.dart';
 import 'package:omniversify_social_app/services/share_in_service.dart';
 import 'package:omniversify_social_app/widgets/share_sheet.dart';
 
+import 'account_fixtures.dart';
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     MessagesService.instance.reset();
+    // Picking people to send to needs a confirmed email; these tests are
+    // about what lands in the thread, so they start already signed in.
+    signInForTest();
   });
 
   group('shares', () {

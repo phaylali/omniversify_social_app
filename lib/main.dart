@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -6,6 +8,7 @@ import 'package:omniversify_widget/omniversify_widget.dart';
 import 'core/config/api_config.dart';
 import 'models/post.dart';
 import 'data/dummy_data.dart';
+import 'services/account_service.dart';
 import 'services/audio_player_service.dart';
 import 'services/daily_tasks.dart';
 import 'services/date_cache.dart';
@@ -49,6 +52,9 @@ void main() async {
   await EpisodeTrackerService.instance.load();
   // Today's task counters, so the Tasks page opens on the right day's counts.
   await DailyTasks.instance.init();
+  // Signed-in person, if this device still has a live session. Not awaited:
+  // a slow or absent network must never hold up the first frame.
+  unawaited(AccountService.instance.restore());
   // Start media session + load persisted player settings before first frame
   // so the Android notification is ready as soon as playback begins.
   final audio = AudioPlayerService.instance;

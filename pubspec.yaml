@@ -25,6 +25,9 @@ dependencies:
   audioplayers: ^6.1.0
   audio_service: ^0.18.19
   shared_preferences: ^2.5.0
+  # The session token lives here, not in plain preferences: a credential
+  # belongs in the platform keystore where a phone backup cannot carry it off.
+  flutter_secure_storage: ^11.2.0
   media_kit: ^1.1.11
   media_kit_video: ^1.2.5
   media_kit_libs_video: ^1.0.5
