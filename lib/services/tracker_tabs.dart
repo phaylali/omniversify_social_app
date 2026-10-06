@@ -74,6 +74,13 @@ const TrackerSlot _watched = TrackerSlot(
   empty: 'Series you have seen to the end land here',
 );
 
+const TrackerSlot _toRead = TrackerSlot(
+  id: 'to_read',
+  label: 'To read',
+  icon: Icons.bookmark_add_outlined,
+  empty: 'Books you mean to get to sit here',
+);
+
 const TrackerSlot _reading = TrackerSlot(
   id: 'reading',
   label: 'Reading',
@@ -162,7 +169,8 @@ TrackerTabs trackerTabsFor(String? category) {
       // the episodes that have not aired yet.
       return const TrackerTabs(slots: [_watching, _watched], upcoming: true);
     case 'books':
-      return const TrackerTabs(slots: [_reading, _read]);
+      // In the order a book travels: wanted, in progress, finished.
+      return const TrackerTabs(slots: [_toRead, _reading, _read]);
     case 'movies':
       return const TrackerTabs(slots: [_movieWatchlist, _movieWatched]);
     case 'games':

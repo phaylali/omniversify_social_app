@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:omniversify_social_app/screens/integrations_screen.dart';
 import 'package:omniversify_social_app/screens/series_tracking_screen.dart';
 import 'package:omniversify_social_app/screens/tracker_screen.dart';
 import 'package:omniversify_social_app/screens/upcoming_tab.dart';
@@ -71,7 +72,7 @@ void main() {
 
   test('books read, games travel Wishlist → Owned → Played', () {
     expect(trackerTabsFor('books').labels,
-        ['Discovery', 'Reading', 'Read']);
+        ['Discovery', 'To read', 'Reading', 'Read']);
     expect(
       trackerTabsFor('games').labels,
       ['Discovery', 'Wishlist', 'Owned', 'Played'],
@@ -135,9 +136,11 @@ void main() {
     TrackerCollectionService.instance.reset();
     final service = TrackerCollectionService.instance;
 
-    // A wishlist is still to get to; a library is already had.
-    expect((await service.itemsFor('books', 'reading')).single['title'],
+    // A wishlist is still to get to — that is exactly what To read means;
+    // a library is already had.
+    expect((await service.itemsFor('books', 'to_read')).single['title'],
         'Wish');
+    expect(await service.itemsFor('books', 'reading'), isEmpty);
     expect((await service.itemsFor('books', 'read')).single['title'], 'Done');
     // Games keep Owned for what you have, not the last shelf.
     expect((await service.itemsFor('games', 'owned')).single['name'], 'Ow');
@@ -162,6 +165,69 @@ void main() {
     expect(await service.removeFromPlaylist('Road trip', 5), isFalse);
     expect(await service.deletePlaylist('Road trip'), isTrue);
     expect(await service.playlists(), isEmpty);
+  });
+
+  // ─── Importing a library ──────────────────────────────────
+
+  test('an import lands a whole shelf in one write', () async {
+    final service = TrackerCollectionService.instance;
+    await service.add(
+        'games', const {'id': 1, 'name': 'Still wished'}, 'wishlist');
+
+    final added = await service.addAll('games', [
+      {'id': 2, 'name': 'Portal 2', 'owned_playtime': 12, 'last_played': '2024-05-01'},
+      {'id': 3, 'name': 'Hades'},
+      {'id': 3, 'name': 'Hades again'},  // the same game, twice in the batch
+    ], 'owned');
+
+    // One new row each, in the order Steam sent them.
+    expect(added, 2);
+    final owned = await service.itemsFor('games', 'owned');
+    expect(owned.map((e) => e['id']).toList(), [2, 3]);
+    // Hours and the last evening with it travel with the game.
+    expect(owned.first['owned_playtime'], 12);
+    expect(owned.first['last_played'], '2024-05-01');
+    // Anything the import did not mention keeps its own shelf.
+    expect(await service.contains('games', 1, 'wishlist'), isTrue);
+  });
+
+  test('an import takes a game off the shelf it was already on', () async {
+    final service = TrackerCollectionService.instance;
+    await service.add(
+        'games', const {'id': 9, 'name': 'Wished first'}, 'wishlist');
+
+    await service.addAll('games', [
+      {'id': 9, 'name': 'Wished first'},
+    ], 'owned');
+
+    expect(await service.contains('games', 9, 'owned'), isTrue);
+    expect(await service.contains('games', 9, 'wishlist'), isFalse);
+    // Already there, so nothing new was written the second time round.
+    expect(
+      await service.addAll('games', [
+        {'id': 9, 'name': 'Wished first'},
+      ], 'owned'),
+      0,
+    );
+  });
+
+  test('a shelf on screen hears about every write', () async {
+    final service = TrackerCollectionService.instance;
+    final before = service.version.value;
+
+    await service.add('games', const {'id': 4, 'name': 'One'}, 'owned');
+    expect(service.version.value, before + 1);
+
+    await service.addAll('games', const [
+      {'id': 5, 'name': 'Two'},
+    ], 'owned');
+    expect(service.version.value, before + 2);
+
+    // A write that changes nothing stays quiet.
+    await service.addAll('games', const [
+      {'id': 5, 'name': 'Two'},
+    ], 'owned');
+    expect(service.version.value, before + 2);
   });
 
   // ─── Airing ──────────────────────────────────────────────
@@ -470,5 +536,99 @@ void main() {
     // pretending it looked.
     expect(find.textContaining('Everything your 1 series'), findsOneWidget);
     expect(find.textContaining('Nothing on the horizon'), findsNothing);
+  });
+
+  // ─── Steam ────────────────────────────────────────────────
+
+  testWidgets('the games tracker offers the Steam import, and only on Owned',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const MaterialApp(
+      home: TrackerScreen(
+        title: 'Games',
+        icon: Icons.sports_esports_outlined,
+        accentColor: Color(0xFF107C10),
+        apiCategory: 'games',
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byKey(const ValueKey('steam-import')), findsOneWidget);
+
+    await tapTab(tester, 'Owned');
+    expect(find.text('Import from Steam'), findsOneWidget);
+
+    // A shelf nothing can be imported onto offers nothing.
+    await tapTab(tester, 'Wishlist');
+    expect(find.text('Import from Steam'), findsNothing);
+  });
+
+  testWidgets('the Steam sheet asks for a profile and explains a failure',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const MaterialApp(
+      home: TrackerScreen(
+        title: 'Games',
+        icon: Icons.sports_esports_outlined,
+        accentColor: Color(0xFF107C10),
+        apiCategory: 'games',
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.tap(find.byKey(const ValueKey('steam-import')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    const profileField = ValueKey('steam-profile');
+    expect(find.byKey(profileField), findsOneWidget);
+    expect(find.text('They land on your Owned shelf.'), findsOneWidget);
+
+    // Nothing typed in yet.
+    await tester.tap(find.text('Import'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Enter a Steam profile URL or name'), findsOneWidget);
+
+    // A profile nothing can be fetched for keeps the sheet open and says
+    // why, rather than closing on an empty shelf.
+    await tester.enterText(
+        find.byKey(profileField), 'steamcommunity.com/id/phaylali');
+    await tester.pump();
+    await tester.tap(find.text('Import'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final field = tester.widget<TextField>(find.byKey(profileField));
+    expect(field.decoration?.errorText, isNotNull);
+    expect(find.byKey(profileField), findsOneWidget);
+    expect(await TrackerCollectionService.instance.itemsFor('games', 'owned'),
+        isEmpty);
+  });
+
+  testWidgets('Integrations is honest about what each service offers',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: IntegrationsScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Steam'), findsOneWidget);
+    expect(find.text('Works now'), findsOneWidget);
+    // Epic will not hand over a library to anyone, and says so.
+    expect(find.text('Epic Games'), findsOneWidget);
+    expect(find.text('Not available'), findsOneWidget);
+    expect(find.text('Goodreads'), findsOneWidget);
+    expect(find.text('Letterboxd'), findsOneWidget);
+    expect(find.text('Next'), findsNWidgets(2));
   });
 }

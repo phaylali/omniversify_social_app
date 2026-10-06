@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniversify_widget/omniversify_widget.dart';
 
 import '../services/privacy_service.dart';
+import 'integrations_screen.dart';
 import 'privacy_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -116,6 +117,17 @@ class SettingsScreen extends ConsumerWidget {
             title: 'Cloud Sync',
             subtitle: 'Manage data sync',
             onTap: () {},
+          ),
+          const SizedBox(height: 16),
+          _sectionHeader(context, 'INTEGRATIONS'),
+          _tile(
+            context,
+            icon: Icons.extension_outlined,
+            title: 'Integrations',
+            subtitle: 'Steam, Goodreads, Letterboxd',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const IntegrationsScreen()),
+            ),
           ),
           const SizedBox(height: 16),
           _sectionHeader(context, 'SUPPORT'),

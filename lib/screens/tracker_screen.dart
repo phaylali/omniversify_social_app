@@ -7,6 +7,7 @@ import '../services/tracker_collection_service.dart';
 import '../services/tracker_tabs.dart';
 import '../widgets/action_sheet.dart';
 import '../widgets/app_logo.dart';
+import 'integrations_screen.dart';
 import 'series_tracking_screen.dart';
 import 'upcoming_tab.dart';
 
@@ -83,6 +84,17 @@ class _TrackerScreenState extends State<TrackerScreen>
           ],
         ),
         centerTitle: true,
+        // Steam is the one service that hands over a library, and this is
+        // the tracker it belongs to.
+        actions: [
+          if (widget.apiCategory == 'games')
+            IconButton(
+              key: const ValueKey('steam-import'),
+              icon: const Icon(Icons.cloud_download_outlined, size: 20),
+              tooltip: 'Import from Steam',
+              onPressed: () => showSteamImportSheet(context, accent: _accent),
+            ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           // Four tabs do not fit side by side on a phone: the strip scrolls,
@@ -765,7 +777,21 @@ class _CollectionTabState extends State<_CollectionTab>
   @override
   void initState() {
     super.initState();
+    TrackerCollectionService.instance.version.addListener(_onStoreChanged);
     _reload();
+  }
+
+  @override
+  void dispose() {
+    TrackerCollectionService.instance.version.removeListener(_onStoreChanged);
+    super.dispose();
+  }
+
+  /// Somewhere else wrote to the store — an import from Steam, a shelf
+  /// button in the detail dialog — so this shelf reads itself again and
+  /// shows what is really on it.
+  void _onStoreChanged() {
+    if (mounted) _reload();
   }
 
   Future<void> _reload() async {
@@ -793,6 +819,10 @@ class _CollectionTabState extends State<_CollectionTab>
         title: widget.title,
         icon: widget.slot.icon,
         message: widget.slot.empty,
+        // An empty Owned shelf is exactly the moment to go and fetch them.
+        action: widget.apiCategory == 'games' && widget.slot.id == 'owned'
+            ? _SteamImportAction(accent: widget.accent)
+            : null,
       );
     }
 
@@ -1830,17 +1860,42 @@ class _ErrorState extends StatelessWidget {
 
 // ─── Placeholder tab (empty Wishlist / Library) ─────────────
 
+/// The one thing an empty Owned shelf can do about being empty.
+class _SteamImportAction extends StatelessWidget {
+  const _SteamImportAction({required this.accent});
+
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: FilledButton.icon(
+        onPressed: () => showSteamImportSheet(context, accent: accent),
+        style: FilledButton.styleFrom(backgroundColor: accent),
+        icon: const Icon(Icons.cloud_download_outlined, size: 18),
+        label: const Text('Import from Steam'),
+      ),
+    );
+  }
+}
+
 class _PlaceholderTab extends StatelessWidget {
   final Color accent;
   final String title;
   final IconData icon;
   final String message;
 
+  /// Shown under the message when this particular emptiness has something
+  /// worth doing about it — only the games' Owned shelf does today.
+  final Widget? action;
+
   const _PlaceholderTab({
     required this.accent,
     required this.title,
     required this.icon,
     required this.message,
+    this.action,
   });
 
   @override
@@ -1857,6 +1912,7 @@ class _PlaceholderTab extends StatelessWidget {
                   color: accent.withAlpha(120),
                 ),
           ),
+          ?action,
         ],
       ),
     );

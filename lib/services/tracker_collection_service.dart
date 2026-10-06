@@ -29,7 +29,7 @@ class TrackerCollectionService {
   /// library something already had (the last one — except games, where
   /// `Owned` says it better than the final slot does).
   static const Map<String, List<String>> _legacySlots = {
-    'books': ['reading', 'read'],
+    'books': ['to_read', 'read'],
     'movies': ['watchlist', 'watched'],
     'games': ['wishlist', 'owned'],
     'podcasts': ['listening', 'listened'],
@@ -40,6 +40,11 @@ class TrackerCollectionService {
   Map<String, Map<String, List<Map<String, dynamic>>>> _store = {};
   Map<String, List<Map<String, dynamic>>> _playlists = {};
   bool _loaded = false;
+
+  /// Bumped on every write, so a shelf on screen knows to read itself
+  /// again — an import lands from another screen, and the tabs watching
+  /// this pick the new list up without being told which slot moved.
+  final ValueNotifier<int> version = ValueNotifier<int>(0);
 
   Future<void> _ensureLoaded() async {
     if (_loaded) return;
@@ -100,11 +105,13 @@ class TrackerCollectionService {
   Future<void> _persist() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storeKey, jsonEncode(_store));
+    version.value++;
   }
 
   Future<void> _persistPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_playlistsKey, jsonEncode(_playlists));
+    version.value++;
   }
 
   Map<String, Map<String, List<Map<String, dynamic>>>> _migrateLegacy(
@@ -210,6 +217,50 @@ class TrackerCollectionService {
     }
     if (changed) await _persist();
     return changed;
+  }
+
+  /// Puts a whole batch in [slot] in one write — an import from Steam lands
+  /// a few hundred games at once, and one write per game would be silly.
+  ///
+  /// The same exclusivity as [add]: anything in the batch leaves the
+  /// category's other shelves, since a title is ever only on one. Items
+  /// already in [slot] keep their place; the batch goes in behind them, in
+  /// the order it arrived. Returns how many were new.
+  Future<int> addAll(
+    String category,
+    List<Map<String, dynamic>> items,
+    String slot,
+  ) async {
+    await _ensureLoaded();
+    if (items.isEmpty) return 0;
+
+    final slots = _store[category] ??= {};
+    final target = slots[slot] ??= <Map<String, dynamic>>[];
+    final ids = {
+      for (final item in items)
+        if (item['id'] != null) item['id'],
+    };
+
+    var changed = false;
+    for (final entry in slots.entries) {
+      if (entry.key == slot) continue;
+      final before = entry.value.length;
+      entry.value.removeWhere((e) => ids.contains(e['id']));
+      if (entry.value.length != before) changed = true;
+    }
+
+    final seen = <dynamic>{};
+    var added = 0;
+    for (final item in items) {
+      final id = item['id'];
+      if (id == null || !seen.add(id)) continue;
+      if (target.any((e) => e['id'] == id)) continue;
+      target.add(_snapshot(item));
+      added++;
+      changed = true;
+    }
+    if (changed) await _persist();
+    return added;
   }
 
   /// Takes the item out of [slot]; true when it was there.
@@ -324,6 +375,10 @@ class TrackerCollectionService {
       'summary',
       'synopsis',
       'description',
+      // Steam's side of the shelf: hours with it, last time it was opened.
+      'owned_playtime',
+      'last_played',
+      'steam_id',
     };
     final out = <String, dynamic>{};
     for (final k in keep) {

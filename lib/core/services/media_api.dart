@@ -116,6 +116,47 @@ class MediaApi {
     return all;
   }
 
+  /// A Steam account's owned games: `GET /api/v1/integrations/steam`.
+  ///
+  /// `profile` is whatever they pasted — a profile URL, a SteamID64, or a
+  /// vanity name. The payload comes back as the backend's own catalogue rows
+  /// (`results`), each carrying `owned_playtime` and `last_played`, with the
+  /// appids we don't hold listed under `unmatched`.
+  static Future<Map<String, dynamic>> steamLibrary({
+    required String profile,
+  }) async {
+    final uri = Uri.parse('$_base/api/v1/integrations/steam')
+        .replace(queryParameters: {'profile': profile});
+
+    final http.Response resp;
+    try {
+      resp = await http.get(uri);
+    } catch (e) {
+      throw MediaApiException('Cannot reach the server: $e');
+    }
+
+    Object? json;
+    try {
+      json = jsonDecode(resp.body);
+    } on FormatException {
+      json = null; // A non-JSON body only matters if we needed it.
+    }
+
+    if (resp.statusCode != 200) {
+      // The backend sends its own reason: private library, bad key, no key.
+      final detail = json is Map<String, dynamic> ? json['detail'] : null;
+      throw MediaApiException(
+        detail is String && detail.isNotEmpty
+            ? detail
+            : 'Steam import failed: ${resp.statusCode}',
+      );
+    }
+    if (json is! Map<String, dynamic>) {
+      throw const MediaApiException('Unexpected Steam payload');
+    }
+    return json;
+  }
+
   /// Merge title + artist searches for music (API supports both params).
   static Future<MediaPage> searchMusic({
     required String query,
