@@ -85,6 +85,10 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
   bool _showPlayOverlay = false;
   bool _isBuffering = false;
 
+  /// Whether the clip is allowed to make a noise. It is not, at first: sound
+  /// is the viewer's decision to make, not the video's.
+  bool _muted = true;
+
   /// The clip's own size in pixels, once the header has been read. Until
   /// then the box keeps the shape it has always had, rather than jumping
   /// around while the file opens.
@@ -96,6 +100,10 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
     super.initState();
     _player = Player();
     _controller = VideoController(_player);
+
+    // Quiet from the first frame. A video that opens shouting at you is one
+    // people close before it has said anything.
+    _player.setVolume(0);
 
     _player.stream.playing.listen((playing) {
       if (mounted) setState(() {});
@@ -133,6 +141,13 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
     setState(() => _showPlayOverlay = false);
   }
 
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    // 0 is silent, 100 is as loud as the clip was mastered — media_kit's
+    // volume runs to 100, not to 1.
+    _player.setVolume(_muted ? 0 : 100);
+  }
+
   /// The box this clip wants, or null when it should fill its parent — the
   /// feed already wraps the player in the aspect ratio it wants.
   Size? _box() {
@@ -147,17 +162,47 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    final player = GestureDetector(
+    final video = GestureDetector(
       onTap: _togglePlay,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Video(
-            controller: _controller,
-            fit: widget.fit,
-            onEnterFullscreen: () =>
-                _enterFullscreenFor(_videoWidth ?? 0, _videoHeight ?? 0),
-            onExitFullscreen: _exitToSensor,
+          // media_kit's own controls, left exactly as they are for normal
+          // playback — except in fullscreen, where its bottom bar gains the
+          // speaker switch, so a clip that opened quiet can be made loud
+          // without backing out of fullscreen to find the button.
+          MaterialVideoControlsTheme(
+            normal: kDefaultMaterialVideoControlsThemeData,
+            fullscreen:
+                kDefaultMaterialVideoControlsThemeDataFullscreen.copyWith(
+              bottomButtonBar: [
+                MaterialPositionIndicator(),
+                Spacer(),
+                // Read from the player rather than from this widget: the
+                // fullscreen route keeps a copy of this bar built before it
+                // opened, and the copy must still follow the volume.
+                StreamBuilder<double>(
+                  stream: _player.stream.volume,
+                  initialData: _muted ? 0 : 100,
+                  builder: (context, snapshot) {
+                    final volume = snapshot.data ?? 100;
+                    return MuteButton(
+                      muted: volume == 0,
+                      filled: false,
+                      onToggle: _toggleMute,
+                    );
+                  },
+                ),
+                MaterialFullscreenButton(),
+              ],
+            ),
+            child: Video(
+              controller: _controller,
+              fit: widget.fit,
+              onEnterFullscreen: () =>
+                  _enterFullscreenFor(_videoWidth ?? 0, _videoHeight ?? 0),
+              onExitFullscreen: _exitToSensor,
+            ),
           ),
 
           if (_isBuffering)
@@ -178,9 +223,63 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
       ),
     );
 
+    // A sibling of the play surface, not a child of it: the tap that changes
+    // the sound must never also pause the video, and the two recognizers must
+    // never be left to argue over one finger.
+    final player = Stack(
+      fit: StackFit.passthrough,
+      children: [
+        video,
+        Positioned(
+          top: 6,
+          right: 6,
+          child: MuteButton(muted: _muted, onToggle: _toggleMute),
+        ),
+      ],
+    );
+
     final box = _box();
     if (box == null) return player;
     return SizedBox(width: box.width, height: box.height, child: player);
+  }
+}
+
+/// The speaker switch: sound comes back when the person asks for it, and
+/// leaves again just as readily.
+///
+/// [filled] keeps it a bare icon where its neighbours are bare icons too —
+/// media_kit's fullscreen button bar — and gives it a dark disc of its own
+/// when it stands alone on a frame of video.
+class MuteButton extends StatelessWidget {
+  const MuteButton({
+    super.key,
+    required this.muted,
+    required this.onToggle,
+    this.filled = true,
+  });
+
+  final bool muted;
+  final VoidCallback onToggle;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      key: const ValueKey('video-mute'),
+      tooltip: muted ? 'Unmute' : 'Mute',
+      onPressed: onToggle,
+      icon: Icon(
+        muted ? Icons.volume_off : Icons.volume_up,
+        size: 22,
+      ),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      style: IconButton.styleFrom(
+        foregroundColor: Colors.white,
+        backgroundColor: filled ? Colors.black38 : Colors.transparent,
+        shape: const CircleBorder(),
+      ),
+    );
   }
 }
 
