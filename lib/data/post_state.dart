@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../models/post.dart';
 import '../data/dummy_data.dart';
 import '../services/daily_tasks.dart';
+import '../services/user_posts.dart';
 
 class Comment {
   final String id;
@@ -141,6 +142,41 @@ class PostStateNotifier extends StateNotifier<Map<String, PostState>> {
         ),
       };
     }
+    // And the posts you have written, which [UserPosts] reads before the
+    // first frame. Missing these would leave every one of them impossible to
+    // like or comment on after a restart.
+    for (final post in UserPosts.instance.posts.value) {
+      register(post);
+    }
+  }
+
+  /// Gives a freshly composed post a state entry.
+  ///
+  /// Without this, liking it would fall straight through the null check in
+  /// [toggleLike] and the heart would do nothing — the seeded feed is the only
+  /// thing the constructor knows about.
+  void register(Post post) {
+    if (state.containsKey(post.id)) return;
+    state = {
+      ...state,
+      post.id: PostState(
+        likes: post.likes,
+        liked: post.liked,
+        comments: post.comments,
+        shares: post.shares,
+        likers: _generateLikers(post.likes),
+        commentList: const [],
+        sharers: _generateSharers(post.shares),
+        visibility: post.visibility,
+      ),
+    };
+  }
+
+  /// Drops a post's entry when you withdraw it, so its id cannot be liked,
+  /// commented on or shared again from a stale widget.
+  void unregister(String postId) {
+    if (!state.containsKey(postId)) return;
+    state = {...state}..remove(postId);
   }
 
   List<PostUser> _generateLikers(int count) {

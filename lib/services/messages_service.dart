@@ -13,13 +13,78 @@ class DmPerson {
   String get initial => name.isEmpty ? '?' : name.substring(0, 1).toUpperCase();
 }
 
+/// What rode along with a message when the message was not just words.
+enum ChatAttachment {
+  image('Photo'),
+  video('Video'),
+  audio('Voice note'),
+  file('File');
+
+  const ChatAttachment(this.label);
+
+  /// How the drawer's last line names it when nothing was typed.
+  final String label;
+}
+
 /// One message in a thread: what was said, which way it went, and when.
 class ChatMessage {
-  ChatMessage({required this.text, required this.fromMe, required this.at});
+  ChatMessage({
+    required this.text,
+    required this.fromMe,
+    required this.at,
+    this.attachment,
+    this.path,
+    this.name,
+    this.seconds,
+  });
 
   final String text;
   final bool fromMe;
   final DateTime at;
+
+  /// What came with the words, or null for a plain message.
+  final ChatAttachment? attachment;
+
+  /// Where the copy in app storage lives — the picker's own path may not.
+  final String? path;
+
+  /// The file's original name, so a camera photo still reads as `IMG_0042`.
+  final String? name;
+
+  /// Length of a voice note, in seconds.
+  final int? seconds;
+
+  bool get hasAttachment => attachment != null;
+
+  /// What the drawer shows under the sender's name: the words if there are
+  /// any, otherwise the kind of thing that was sent.
+  String get label {
+    if (text.isNotEmpty) return text;
+    final kind = attachment;
+    if (kind == null) return '';
+    switch (kind) {
+      case ChatAttachment.audio:
+        return seconds == null
+            ? kind.label
+            : '${kind.label} · ${clockDuration(seconds)}';
+      case ChatAttachment.file:
+        final file = name;
+        return file == null || file.isEmpty
+            ? kind.label
+            : '${kind.label} · $file';
+      case ChatAttachment.image:
+      case ChatAttachment.video:
+        return kind.label;
+    }
+  }
+
+  /// Length of a voice note as the chat shows it: `0:07` / `1:04`.
+  static String clockDuration(int? seconds) {
+    if (seconds == null || seconds <= 0) return '0:00';
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
 
   /// Age of the message: `now` / `2m` / `1h` / `2d`.
   String get when {
@@ -39,13 +104,31 @@ class ChatMessage {
         'text': text,
         'fromMe': fromMe,
         'at': at.toIso8601String(),
+        if (attachment != null) 'attachment': attachment!.name,
+        if (path != null) 'path': path,
+        if (name != null) 'name': name,
+        if (seconds != null) 'seconds': seconds,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         text: json['text'] as String? ?? '',
         fromMe: json['fromMe'] as bool? ?? false,
         at: DateTime.tryParse(json['at'] as String? ?? '') ?? DateTime.now(),
+        attachment: _attachmentFrom(json['attachment'] as String?),
+        path: json['path'] as String?,
+        name: json['name'] as String?,
+        seconds: json['seconds'] as int?,
       );
+
+  /// An unknown kind from a future version reads as a plain message rather
+  /// than throwing the whole thread away.
+  static ChatAttachment? _attachmentFrom(String? name) {
+    if (name == null) return null;
+    for (final kind in ChatAttachment.values) {
+      if (kind.name == name) return kind;
+    }
+    return null;
+  }
 }
 
 /// The direct messages behind the drawer: who you can talk to, what has been
@@ -170,6 +253,39 @@ class MessagesService {
     next[handle] = [
       ...thread(handle),
       ChatMessage(text: text.trim(), fromMe: true, at: DateTime.now()),
+    ];
+    threads.value = next;
+    await _save();
+  }
+
+  /// Sends something that is not just words: a photo, a video, a file or a
+  /// voice note, optionally captioned.
+  ///
+  /// [path] must already be a copy living in app storage — the path a picker
+  /// hands back is in cache and can be revoked, so the composer runs it
+  /// through `persistMedia` first.
+  Future<void> sendAttachment(
+    String handle, {
+    required ChatAttachment attachment,
+    required String path,
+    String? name,
+    String text = '',
+    int? seconds,
+  }) async {
+    if (path.isEmpty) return;
+    await init();
+    final next = {...threads.value};
+    next[handle] = [
+      ...thread(handle),
+      ChatMessage(
+        text: text.trim(),
+        fromMe: true,
+        at: DateTime.now(),
+        attachment: attachment,
+        path: path,
+        name: name,
+        seconds: seconds,
+      ),
     ];
     threads.value = next;
     await _save();

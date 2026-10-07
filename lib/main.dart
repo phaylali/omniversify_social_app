@@ -24,8 +24,10 @@ import 'services/relationship_service.dart';
 import 'services/share_in_service.dart';
 import 'services/weather_locations.dart';
 import 'services/xp_service.dart';
+import 'services/user_posts.dart';
 import 'widgets/widgets.dart';
 import 'screens/chat_screen.dart';
+import 'screens/create_post_screen.dart';
 import 'screens/scrolls_screen.dart';
 import 'screens/tools_screen.dart';
 import 'screens/settings_screen.dart';
@@ -52,6 +54,8 @@ void main() async {
   await EpisodeTrackerService.instance.load();
   // Today's task counters, so the Tasks page opens on the right day's counts.
   await DailyTasks.instance.init();
+  // Posts you have written, before the feed first paints.
+  await UserPosts.instance.init();
   // Signed-in person, if this device still has a live session. Not awaited:
   // a slow or absent network must never hold up the first frame.
   unawaited(AccountService.instance.restore());
@@ -202,81 +206,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showCreatePostDialog() {
-    final gold = Theme.of(context).colorScheme.primary;
-    final types = <(String, IconData)>[
-      ('Thought', Icons.chat_bubble_outline),
-      ('Story', Icons.auto_awesome_outlined),
-      ('Movie', Icons.movie_outlined),
-      ('Series', Icons.tv_outlined),
-      ('Song', Icons.music_note_outlined),
-      ('Podcast', Icons.podcasts_outlined),
-      ('Link', Icons.link_outlined),
-      ('Activity', Icons.fitness_center_outlined),
-      ('Location', Icons.location_on_outlined),
-      ('Anime', Icons.animation_outlined),
-      ('Book', Icons.menu_book_outlined),
-      ('Game', Icons.sports_esports_outlined),
-      ('Photo/Video', Icons.photo_library_outlined),
-      ('File', Icons.attach_file_outlined),
-    ];
-
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Create post'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: GridView.count(
-            crossAxisCount: 3,
-            shrinkWrap: true,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 0.95,
-            children: [
-              for (final (label, icon) in types)
-                InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () {
-                    Navigator.of(dialogContext).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Creating a $label post'),
-                        duration: const Duration(seconds: 2),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(dialogContext).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: gold.withAlpha(40), width: 0.5),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(icon, color: gold, size: 26),
-                        const SizedBox(height: 8),
-                        Text(
-                          label,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(dialogContext).textTheme.bodySmall?.copyWith(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
+    // A real composer rather than the old tile grid, whose tiles only ever
+    // fired a SnackBar. Returns the id of whatever was published.
+    CreatePostScreen.show(context);
   }
 
   List<Widget> get _pages => [
@@ -295,21 +227,28 @@ class FeedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Muted or blocked accounts drop out of the feed until they're restored.
+    // Your own posts sit in front of the seeded ones and are listened to
+    // separately, so publishing repaints without touching the mute filter.
     return ValueListenableBuilder<Set<String>>(
       valueListenable: MuteService.instance.muted,
       builder: (context, muted, _) {
-        final posts = [
-          for (final post in dummyPosts)
-            if (!muted.contains(post.user.handle)) post,
-        ];
-        if (posts.isEmpty) return _everythingHidden(context);
+        return ValueListenableBuilder<List<Post>>(
+          valueListenable: UserPosts.instance.posts,
+          builder: (context, mine, _) {
+            final posts = [
+              for (final post in [...mine, ...dummyPosts])
+                if (!muted.contains(post.user.handle)) post,
+            ];
+            if (posts.isEmpty) return _everythingHidden(context);
 
-        return ListView.builder(
-          padding: const EdgeInsets.only(bottom: 80),
-          itemCount: posts.length + 1,
-          itemBuilder: (context, index) {
-            if (index == 0) return const StoriesRow();
-            return _buildPost(posts[index - 1]);
+            return ListView.builder(
+              padding: const EdgeInsets.only(bottom: 80),
+              itemCount: posts.length + 1,
+              itemBuilder: (context, index) {
+                if (index == 0) return const StoriesRow();
+                return _buildPost(posts[index - 1]);
+              },
+            );
           },
         );
       },
@@ -419,19 +358,22 @@ class ExploreScreen extends StatelessWidget {
         ),
         ValueListenableBuilder<Set<String>>(
           valueListenable: MuteService.instance.muted,
-          builder: (context, muted, _) {
-            final visible = [
-              for (final post in dummyPosts)
-                if (!muted.contains(post.user.handle)) post,
-            ];
-            if (visible.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
-            return SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) => _buildPost(visible[index % visible.length]),
-                childCount: 5,
-              ),
-            );
-          },
+          builder: (context, muted, _) => ValueListenableBuilder<List<Post>>(
+            valueListenable: UserPosts.instance.posts,
+            builder: (context, mine, _) {
+              final visible = [
+                for (final post in [...mine, ...dummyPosts])
+                  if (!muted.contains(post.user.handle)) post,
+              ];
+              if (visible.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+              return SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildPost(visible[index % visible.length]),
+                  childCount: 5,
+                ),
+              );
+            },
+          ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 80)),
       ],
@@ -445,8 +387,21 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Yours land on top of the seeded ones under your handle, and listening
+    // here keeps the grid and the "Posts" count in step when you publish.
+    return ValueListenableBuilder<List<Post>>(
+      valueListenable: UserPosts.instance.posts,
+      builder: (context, mine, _) => _body(context, mine),
+    );
+  }
+
+  Widget _body(BuildContext context, List<Post> mine) {
     final gold = Theme.of(context).colorScheme.primary;
-    final userPosts = dummyPosts.where((p) => p.user.handle == currentUser.handle).toList();
+    final userPosts = [
+      ...mine,
+      for (final p in dummyPosts)
+        if (p.user.handle == currentUser.handle) p,
+    ];
 
     return CustomScrollView(
       slivers: [
@@ -998,7 +953,7 @@ class _DmsDrawerState extends State<DmsDrawer> {
                                       ?.color)),
                     ],
                   ),
-                  subtitle: Text(last.text,
+                  subtitle: Text(last.label,
                       style: TextStyle(
                           fontSize: 12,
                           color: hasUnread

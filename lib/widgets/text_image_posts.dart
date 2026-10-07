@@ -6,6 +6,8 @@ import 'post_components.dart';
 import 'image_preview.dart';
 import 'link_preview_widget.dart';
 import 'app_logo.dart';
+import 'file_image_stub.dart'
+    if (dart.library.io) 'file_image.dart';
 
 class TextPostWidget extends StatelessWidget {
   final Post post;
@@ -100,6 +102,38 @@ class TextPostWidget extends StatelessWidget {
   }
 }
 
+/// The composer's photos are paths we copied into app storage; everything
+/// seeded in the feed is a URL. Both arrive as a plain [String], so this picks
+/// the renderer rather than making every call site branch.
+Widget _postImage(String url) {
+  if (url.startsWith('http')) {
+    return Image.network(
+      url,
+      width: double.infinity,
+      height: 200,
+      fit: BoxFit.cover,
+      errorBuilder: _postImageFallback,
+    );
+  }
+  return fileImage(
+    url,
+    width: double.infinity,
+    height: 200,
+    fit: BoxFit.cover,
+    errorBuilder: _postImageFallback,
+  );
+}
+
+/// Unreadable image, on either path: hold the slot and show the mark, so a
+/// dead link or a deleted file never collapses the card's height.
+Widget _postImageFallback(BuildContext context, Object error, StackTrace? stack) {
+  return Container(
+    height: 200,
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    child: const Center(child: AppLogo(size: 64, fit: BoxFit.contain)),
+  );
+}
+
 class ImagePostWidget extends StatelessWidget {
   final Post post;
 
@@ -126,17 +160,7 @@ class ImagePostWidget extends StatelessWidget {
             onLongPress: () => ImagePreview.show(context, post.imageUrl ?? ''),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.network(
-                post.imageUrl ?? '',
-                width: double.infinity,
-                height: 200,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  height: 200,
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: const Center(child: AppLogo(size: 64, fit: BoxFit.contain)),
-                ),
-              ),
+              child: _postImage(post.imageUrl ?? ''),
             ),
           ),
           const SizedBox(height: 6),

@@ -1,9 +1,23 @@
+import 'dart:async';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
 import '../services/account_gate.dart';
 import '../services/messages_service.dart';
 import '../widgets/action_sheet.dart';
+import '../widgets/image_preview.dart';
+import '../widgets/share_sheet.dart';
+import '../widgets/video_player.dart';
+import '../services/file_store_stub.dart'
+    if (dart.library.io) '../services/file_store.dart';
+import '../widgets/file_image_stub.dart'
+    if (dart.library.io) '../widgets/file_image.dart';
 
 /// One direct message conversation: the thread, the bar to type in, and the
 /// things every chat screen offers — call buttons, a conversation menu,
@@ -12,6 +26,10 @@ import '../widgets/action_sheet.dart';
 /// The thread itself lives in [MessagesService], so a link shared from
 /// another app is waiting here, and anything sent here shows up in the
 /// drawer's last line.
+///
+/// A message can carry a photo, a video, a file or a voice note as well as
+/// words. Anything staged is copied into app storage on send, because the path
+/// a picker hands back is not ours to keep.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.handle, this.name});
 
@@ -25,9 +43,29 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+/// What is waiting in the composer to be sent: a picked file, or a voice note
+/// that was just recorded. Copied into app storage only at send time.
+class _Staged {
+  const _Staged({
+    required this.kind,
+    required this.path,
+    this.name,
+    this.seconds,
+  });
+
+  final ChatAttachment kind;
+  final String path;
+  final String? name;
+  final int? seconds;
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _input = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
   bool _canSend = false;
+
+  /// A photo, video, file or voice note waiting to go out with the next send.
+  _Staged? _staged;
 
   String get _name => widget.name ?? MessagesService.nameFor(widget.handle);
 
@@ -35,7 +73,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _input.addListener(() {
-      final canSend = _input.text.trim().isNotEmpty;
+      final canSend = _input.text.trim().isNotEmpty || _staged != null;
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
     // The conversation is open, so whatever was waiting in it is read now.
@@ -50,16 +88,151 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  /// Words on their own, or words plus whatever is staged. Either way the
+  /// email gate runs first — the composer is a posting action like any other.
   Future<void> _send() async {
+    final staged = _staged;
     final text = _input.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && staged == null) return;
     // Posting needs a confirmed email — and whatever was typed stays put
     // if the person comes back without one.
     if (!await mayPost(context)) return;
     if (!mounted) return;
+
     _input.clear();
-    await MessagesService.instance.send(widget.handle, text);
+    setState(() => _staged = null);
+    _canSend = false;
+
+    if (staged == null) {
+      await MessagesService.instance.send(widget.handle, text);
+      return;
+    }
+
+    try {
+      // The picker's path can be revoked or cleared; this one cannot.
+      final path = await persistMedia(
+        staged.path,
+        staged.name ?? staged.kind.name,
+      );
+      await MessagesService.instance.sendAttachment(
+        widget.handle,
+        attachment: staged.kind,
+        path: path,
+        name: staged.name,
+        text: text,
+        seconds: staged.seconds,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      // Put it back rather than dropping what the person chose.
+      setState(() {
+        _staged = staged;
+        _canSend = true;
+      });
+      showActionNotice(context, 'Could not attach that — try again');
+    }
   }
+
+  // ── Attaching ────────────────────────────────────────────────────────
+
+  void _attach() {
+    showActionSheet(
+      context,
+      title: 'Add to your message',
+      icon: Icons.add_circle_outline,
+      items: [
+        ActionSheetItem(
+          icon: Icons.image_outlined,
+          title: 'Photo',
+          subtitle: 'From your gallery',
+          onTap: () => _pickFromGallery(video: false),
+        ),
+        ActionSheetItem(
+          icon: Icons.videocam_outlined,
+          title: 'Video',
+          subtitle: 'From your gallery',
+          onTap: () => _pickFromGallery(video: true),
+        ),
+        ActionSheetItem(
+          icon: Icons.attach_file,
+          title: 'File',
+          subtitle: 'Any document, archive or track',
+          onTap: _pickFile,
+        ),
+        ActionSheetItem(
+          icon: Icons.mic_none_outlined,
+          title: 'Voice note',
+          subtitle: 'Record it instead of typing it',
+          onTap: _recordVoice,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickFromGallery({required bool video}) async {
+    try {
+      final picked = video
+          ? await _picker.pickVideo(source: ImageSource.gallery)
+          : await _picker.pickImage(source: ImageSource.gallery);
+      if (picked == null || !mounted) return;
+      setState(() {
+        _staged = _Staged(
+          kind: video ? ChatAttachment.video : ChatAttachment.image,
+          path: picked.path,
+          name: picked.name,
+        );
+        _canSend = true;
+      });
+    } catch (_) {
+      // A picker that never opened is not worth a dialog.
+    }
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final files = await FilePicker.pickFiles();
+      if (files.isEmpty) return;
+      final file = files.first;
+      final path = file.path;
+      if (path == null || !mounted) return;
+      setState(() {
+        _staged = _Staged(
+          kind: ChatAttachment.file,
+          path: path,
+          name: file.name,
+        );
+        _canSend = true;
+      });
+    } catch (_) {
+      // Same as the gallery: no file chosen, no message.
+    }
+  }
+
+  Future<void> _recordVoice() async {
+    final recorded = await showModalBottomSheet<_Recorded>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => const _VoiceNoteSheet(),
+    );
+    if (recorded == null || !mounted) return;
+    setState(() {
+      _staged = _Staged(
+        kind: ChatAttachment.audio,
+        path: recorded.path,
+        name: null,
+        seconds: recorded.seconds,
+      );
+      _canSend = true;
+    });
+  }
+
+  void _clearStaged() => setState(() {
+        _staged = null;
+        _canSend = _input.text.trim().isNotEmpty;
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -257,10 +430,13 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text(
-              message.text,
-              style: TextStyle(fontSize: 15, height: 1.35, color: ink),
-            ),
+            if (message.hasAttachment)
+              _attachment(message, cs, gold, ink),
+            if (message.text.isNotEmpty)
+              Text(
+                message.text,
+                style: TextStyle(fontSize: 15, height: 1.35, color: ink),
+              ),
             const SizedBox(height: 2),
             Text(
               message.clock,
@@ -269,6 +445,103 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// The payload itself: a photo to tap open, a video that plays in place, a
+  /// voice note with its own controls, or a file with a name.
+  Widget _attachment(
+    ChatMessage message,
+    ColorScheme cs,
+    Color gold,
+    Color ink,
+  ) {
+    final path = message.path ?? '';
+    switch (message.attachment) {
+      case ChatAttachment.image:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: GestureDetector(
+              key: const ValueKey('bubble-image'),
+              onTap: () => ImagePreview.showFile(context, path),
+              child: fileImage(
+                path,
+                width: 220,
+                height: 200,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => _broken(cs, gold),
+              ),
+            ),
+          ),
+        );
+      case ChatAttachment.video:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: _VideoBubble(path: path, name: message.name, ink: ink),
+        );
+      case ChatAttachment.audio:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: _AudioBubble(path: path, seconds: message.seconds, ink: ink),
+        );
+      case ChatAttachment.file:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: InkWell(
+            key: const ValueKey('bubble-file'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => ShareSheet.show(
+              context,
+              shareText: message.name ?? 'File',
+              files: [XFile(path)],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.insert_drive_file_outlined, size: 26, color: ink),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        message.name ?? 'File',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: ink,
+                        ),
+                      ),
+                      Text(
+                        'Sent a file · tap to open',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: ink.withAlpha(170),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      case null:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _broken(ColorScheme cs, Color gold) {
+    return Container(
+      width: 220,
+      height: 200,
+      color: cs.surfaceContainerHighest,
+      child: Icon(Icons.broken_image_outlined, size: 40, color: gold),
     );
   }
 
@@ -311,44 +584,61 @@ class _ChatScreenState extends State<ChatScreen> {
   // ── The composer ─────────────────────────────────────────────────────
 
   Widget _composer(ColorScheme cs, Color gold) {
+    final staged = _staged;
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _input,
-                minLines: 1,
-                maxLines: 4,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  hintText: 'Message $_name…',
-                  filled: true,
-                  fillColor: cs.surfaceContainerHighest,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
+            if (staged != null) _stagedRow(staged, cs, gold),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  key: const ValueKey('chat-attach'),
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'Attach',
+                  style: IconButton.styleFrom(
+                    foregroundColor: gold,
+                    disabledForegroundColor: cs.onSurface.withAlpha(70),
+                  ),
+                  onPressed: _attach,
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    minLines: 1,
+                    maxLines: 4,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      hintText: 'Message $_name…',
+                      filled: true,
+                      fillColor: cs.surfaceContainerHighest,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 11),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              key: const ValueKey('chat-send'),
-              icon: const Icon(Icons.arrow_upward, size: 20),
-              tooltip: 'Send',
-              style: IconButton.styleFrom(
-                backgroundColor: gold,
-                foregroundColor: cs.onPrimary,
-                disabledBackgroundColor: gold.withAlpha(40),
-                disabledForegroundColor: cs.onSurface.withAlpha(80),
-              ),
-              onPressed: _canSend ? _send : null,
+                const SizedBox(width: 8),
+                IconButton(
+                  key: const ValueKey('chat-send'),
+                  icon: const Icon(Icons.arrow_upward, size: 20),
+                  tooltip: 'Send',
+                  style: IconButton.styleFrom(
+                    backgroundColor: gold,
+                    foregroundColor: cs.onPrimary,
+                    disabledBackgroundColor: gold.withAlpha(40),
+                    disabledForegroundColor: cs.onSurface.withAlpha(80),
+                  ),
+                  onPressed: _canSend ? _send : null,
+                ),
+              ],
             ),
           ],
         ),
@@ -356,7 +646,97 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ── Long-press on a message ──────────────────────────────────────────
+  /// What is about to go out, with a way to change their mind before it does.
+  Widget _stagedRow(_Staged staged, ColorScheme cs, Color gold) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: gold.withAlpha(70)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: staged.kind == ChatAttachment.image
+                  ? fileImage(
+                      staged.path,
+                      width: 44,
+                      height: 44,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          Icon(Icons.image_outlined, color: gold),
+                    )
+                  : Icon(_stagedIcon(staged.kind), color: gold, size: 26),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _stagedTitle(staged),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'Ready to send',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: cs.onSurface.withAlpha(150),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('chat-attach-remove'),
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Remove attachment',
+            onPressed: _clearStaged,
+          ),
+        ],
+      ),
+    );
+  }
+
+  static IconData _stagedIcon(ChatAttachment kind) {
+    switch (kind) {
+      case ChatAttachment.image:
+        return Icons.image_outlined;
+      case ChatAttachment.video:
+        return Icons.videocam_outlined;
+      case ChatAttachment.audio:
+        return Icons.mic_none_outlined;
+      case ChatAttachment.file:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  static String _stagedTitle(_Staged staged) {
+    switch (staged.kind) {
+      case ChatAttachment.audio:
+        return 'Voice note · ${ChatMessage.clockDuration(staged.seconds)}';
+      case ChatAttachment.file:
+      case ChatAttachment.image:
+      case ChatAttachment.video:
+        return staged.name ?? staged.kind.label;
+    }
+  }
+
+  // ── Long-press on the message ────────────────────────────────────────
 
   void _showMessageMenu(ChatMessage message) {
     showActionSheet(
@@ -364,15 +744,16 @@ class _ChatScreenState extends State<ChatScreen> {
       title: 'Message',
       subtitle: message.clock,
       items: [
-        ActionSheetItem(
-          icon: Icons.copy_outlined,
-          title: 'Copy text',
-          subtitle: 'Paste it somewhere else',
-          onTap: () {
-            Clipboard.setData(ClipboardData(text: message.text));
-            showActionNotice(context, 'Copied to clipboard');
-          },
-        ),
+        if (message.text.isNotEmpty)
+          ActionSheetItem(
+            icon: Icons.copy_outlined,
+            title: 'Copy text',
+            subtitle: 'Paste it somewhere else',
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: message.text));
+              showActionNotice(context, 'Copied to clipboard');
+            },
+          ),
         ActionSheetItem(
           icon: Icons.delete_outline,
           title: 'Delete for me',
@@ -424,6 +805,557 @@ class _ChatScreenState extends State<ChatScreen> {
             'Thanks — your report about $handle is in review',
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// A finished recording, handed back from the sheet that made it.
+class _Recorded {
+  const _Recorded({required this.path, required this.seconds});
+
+  final String path;
+  final int seconds;
+}
+
+/// Records one voice note: a button to begin, a red dot and a running clock
+/// while it runs, then send it or throw it away.
+///
+/// Nothing here can assume the microphone works — permission can be refused
+/// and the platform can be missing — so every way out says what happened
+/// rather than spinning. And nothing is *asked* until the button is pressed:
+/// a sheet that prompts for the microphone the moment it opens is a prompt
+/// nobody read.
+class _VoiceNoteSheet extends StatefulWidget {
+  const _VoiceNoteSheet();
+
+  @override
+  State<_VoiceNoteSheet> createState() => _VoiceNoteSheetState();
+}
+
+enum _VoiceStage { idle, starting, recording, finished, blocked }
+
+class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
+  /// Created on the first attempt rather than in the field: the recorder
+  /// talks to the platform from its own constructor, and a future nobody
+  /// awaits is an error nobody sees.
+  AudioRecorder? _recorder;
+  Timer? _ticker;
+
+  _VoiceStage _stage = _VoiceStage.idle;
+
+  /// Set when the microphone could not be used at all.
+  String? _blocked;
+
+  String? _path;
+  int _seconds = 0;
+
+  /// Flipped once the recording has been handed back, so [dispose] knows to
+  /// leave the file alone.
+  bool _sent = false;
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    final recorder = _recorder;
+    // Nobody is left to report to once this sheet is gone, so a platform
+    // that refuses to let go is swallowed here instead of thrown on the floor.
+    if (recorder != null) recorder.dispose().catchError((_) {});
+    // A recording nobody sent is a file nobody needs. One that was sent has
+    // to survive this — the composer copies it into app storage on its way
+    // out, which happens after this sheet is already gone.
+    if (!_sent && _path != null) _discard(_path);
+    super.dispose();
+  }
+
+  Future<void> _discard(String? path) {
+    if (path == null || path.isEmpty) return Future.value();
+    return deleteMedia(path);
+  }
+
+  void _block(String why) {
+    if (!mounted) return;
+    setState(() {
+      _stage = _VoiceStage.blocked;
+      _blocked = why;
+    });
+  }
+
+  Future<void> _begin() async {
+    // A take being replaced is a file nobody will hear.
+    final previous = _path;
+    if (previous != null) _discard(previous);
+
+    setState(() {
+      _stage = _VoiceStage.starting;
+      _blocked = null;
+      _seconds = 0;
+      _path = null;
+    });
+
+    try {
+      var status = await Permission.microphone.status;
+      if (!status.isGranted) status = await Permission.microphone.request();
+      if (!status.isGranted) {
+        _block('Microphone access is off, so a voice note cannot be recorded.');
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+
+      final recorder = _recorder ??= AudioRecorder();
+      await recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 48000,
+          sampleRate: 44100,
+          numChannels: 1,
+        ),
+        path: path,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _path = path;
+        _stage = _VoiceStage.recording;
+      });
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && _stage == _VoiceStage.recording) {
+          setState(() => _seconds++);
+        }
+      });
+    } catch (_) {
+      _block('Recording could not start on this device.');
+    }
+  }
+
+  Future<void> _stop() async {
+    _ticker?.cancel();
+    try {
+      final recorder = _recorder;
+      final path = recorder == null ? _path : await recorder.stop();
+      if (!mounted) return;
+      setState(() {
+        _stage = _VoiceStage.finished;
+        _path = path ?? _path;
+      });
+    } catch (_) {
+      _block('Recording could not be saved.');
+    }
+  }
+
+  void _cancel() {
+    _ticker?.cancel();
+    Navigator.of(context).pop();
+  }
+
+  void _send() {
+    final path = _path;
+    if (path == null) return;
+    _sent = true;
+    Navigator.of(context).pop(_Recorded(path: path, seconds: _seconds));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final gold = cs.primary;
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 22),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurface.withAlpha(60),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Voice note',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 18),
+            _body(cs, gold),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _body(ColorScheme cs, Color gold) {
+    switch (_stage) {
+      case _VoiceStage.idle:
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.mic_none_outlined, size: 44, color: gold),
+            const SizedBox(height: 10),
+            Text(
+              'Say it instead of typing it.',
+              style: TextStyle(
+                fontSize: 13.5,
+                color: cs.onSurface.withAlpha(190),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'You will be asked for the microphone first.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: cs.onSurface.withAlpha(150),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  key: const ValueKey('voice-cancel'),
+                  onPressed: _cancel,
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  key: const ValueKey('voice-start'),
+                  style: FilledButton.styleFrom(backgroundColor: gold),
+                  onPressed: _begin,
+                  icon: const Icon(Icons.mic, size: 18),
+                  label: const Text('Start recording'),
+                ),
+              ],
+            ),
+          ],
+        );
+
+      case _VoiceStage.starting:
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 18),
+            Text(
+              'Getting the microphone ready…',
+              style: TextStyle(
+                fontSize: 13,
+                color: cs.onSurface.withAlpha(170),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              key: const ValueKey('voice-cancel'),
+              onPressed: _cancel,
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+
+      case _VoiceStage.blocked:
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.mic_off_outlined,
+              size: 38,
+              color: cs.onSurface.withAlpha(140),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _blocked ?? 'The microphone could not be used.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: cs.onSurface.withAlpha(190),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  key: const ValueKey('voice-cancel'),
+                  onPressed: _cancel,
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  key: const ValueKey('voice-settings'),
+                  style: FilledButton.styleFrom(backgroundColor: gold),
+                  onPressed: openAppSettings,
+                  child: const Text('Open settings'),
+                ),
+              ],
+            ),
+          ],
+        );
+
+      case _VoiceStage.recording:
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  ChatMessage.clockDuration(_seconds),
+                  key: const ValueKey('voice-timer'),
+                  style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Recording',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: cs.onSurface.withAlpha(160),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  key: const ValueKey('voice-cancel'),
+                  onPressed: _cancel,
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  key: const ValueKey('voice-stop'),
+                  style: FilledButton.styleFrom(backgroundColor: gold),
+                  onPressed: _stop,
+                  icon: const Icon(Icons.stop, size: 18),
+                  label: const Text('Stop'),
+                ),
+              ],
+            ),
+          ],
+        );
+
+      case _VoiceStage.finished:
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              ChatMessage.clockDuration(_seconds),
+              key: const ValueKey('voice-timer'),
+              style: const TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _seconds == 0 ? 'Nothing was recorded.' : 'Recorded',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: cs.onSurface.withAlpha(160),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  key: const ValueKey('voice-cancel'),
+                  onPressed: _cancel,
+                  child: const Text('Discard'),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const ValueKey('voice-again'),
+                  onPressed: _begin,
+                  child: const Text('Record again'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  key: const ValueKey('voice-send'),
+                  style: FilledButton.styleFrom(backgroundColor: gold),
+                  // Nothing to send if the recorder came back empty.
+                  onPressed: _seconds > 0 && _path != null ? _send : null,
+                  child: const Text('Send'),
+                ),
+              ],
+            ),
+          ],
+        );
+    }
+  }
+}
+
+/// A video that stays a thumbnail until it is tapped, so a thread full of
+/// them does not spin up a player per bubble.
+class _VideoBubble extends StatefulWidget {
+  const _VideoBubble({required this.path, this.name, required this.ink});
+
+  final String path;
+  final String? name;
+  final Color ink;
+
+  @override
+  State<_VideoBubble> createState() => _VideoBubbleState();
+}
+
+class _VideoBubbleState extends State<_VideoBubble> {
+  bool _playing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_playing) {
+      return SizedBox(
+        width: 220,
+        height: 150,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: AppVideoPlayer(url: widget.path, autoPlay: true),
+        ),
+      );
+    }
+
+    return InkWell(
+      key: const ValueKey('bubble-video'),
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => setState(() => _playing = true),
+      child: Container(
+        width: 220,
+        height: 150,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.play_circle_outline,
+                size: 44, color: Colors.white70),
+            const SizedBox(height: 6),
+            Text(
+              widget.name ?? 'Video',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A voice note: play or pause, a waveform, and how long it runs.
+class _AudioBubble extends StatefulWidget {
+  const _AudioBubble({
+    required this.path,
+    required this.seconds,
+    required this.ink,
+  });
+
+  final String path;
+  final int? seconds;
+  final Color ink;
+
+  @override
+  State<_AudioBubble> createState() => _AudioBubbleState();
+}
+
+class _AudioBubbleState extends State<_AudioBubble> {
+  AudioPlayer? _player;
+  bool _playing = false;
+
+  @override
+  void dispose() {
+    _player?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    if (_playing) {
+      await _player?.stop();
+      if (mounted) setState(() => _playing = false);
+      return;
+    }
+
+    final player = AudioPlayer();
+    _player?.dispose();
+    _player = player;
+    player.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _playing = false);
+    });
+
+    try {
+      await player.play(DeviceFileSource(widget.path));
+      if (mounted) setState(() => _playing = true);
+    } catch (_) {
+      // A file that went missing plays nothing rather than throwing.
+      if (mounted) setState(() => _playing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = widget.ink;
+    return InkWell(
+      key: const ValueKey('bubble-audio'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: _toggle,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
+            size: 34,
+            color: ink,
+          ),
+          const SizedBox(width: 8),
+          SizedBox(width: 120, child: _wave(ink)),
+          const SizedBox(width: 8),
+          Text(
+            ChatMessage.clockDuration(widget.seconds),
+            style: TextStyle(fontSize: 12, color: ink.withAlpha(190)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A fixed shape rather than a measured one: the wave is decoration, and
+  /// the length is what the clock above it already says.
+  Widget _wave(Color ink) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (var i = 0; i < 24; i++)
+          Container(
+            width: 2,
+            height: 4 + ((i * 5 + 3) % 13).toDouble(),
+            margin: const EdgeInsets.symmetric(horizontal: 1.5),
+            decoration: BoxDecoration(
+              color: ink.withAlpha(_playing ? 230 : 140),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
       ],
     );
   }
