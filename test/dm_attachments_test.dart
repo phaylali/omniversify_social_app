@@ -357,23 +357,32 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('the opening frame sits under the play control',
+    testWidgets('the frame fills the tile and the control tucks into the corner',
         (tester) async {
       await pumpTile(tester, frame: frame);
 
       expect(find.byKey(const ValueKey('bubble-video')), findsOneWidget);
       expect(find.byType(Image), findsOneWidget);
-      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
-      expect(find.text('clip.mp4'), findsOneWidget);
+      // Nothing is laid over the picture: the file's name stays out of it.
+      expect(find.text('clip.mp4'), findsNothing);
+
+      // A plain triangle in the top-right — not a badge parked in the
+      // middle of the thing the person opened the chat to look at.
+      final control = find.byIcon(Icons.play_arrow);
+      expect(control, findsOneWidget);
+      final tile = tester.getCenter(find.byKey(const ValueKey('bubble-video')));
+      final button = tester.getCenter(control);
+      expect(button.dx, greaterThan(tile.dx));
+      expect(button.dy, lessThan(tile.dy));
     });
 
-    testWidgets('with no frame it keeps the black card it always had',
+    testWidgets('with no frame it keeps the black card and its name',
         (tester) async {
       await pumpTile(tester);
 
       expect(find.byKey(const ValueKey('bubble-video')), findsOneWidget);
       expect(find.byType(Image), findsNothing);
-      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
       expect(find.text('clip.mp4'), findsOneWidget);
     });
   });

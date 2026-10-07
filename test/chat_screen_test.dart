@@ -173,6 +173,23 @@ void main() {
       expect(tester.widget<IconButton>(send).onPressed, isNull);
     });
 
+    testWidgets('the GIF button holds the left and attach stands by send',
+        (tester) async {
+      await _openChat(tester);
+
+      final gif = tester.getCenter(find.byKey(const ValueKey('chat-gif')));
+      final attach =
+          tester.getCenter(find.byKey(const ValueKey('chat-attach')));
+      final send = tester.getCenter(find.byKey(const ValueKey('chat-send')));
+
+      expect(gif.dx, lessThan(attach.dx));
+      expect(attach.dx, lessThan(send.dx));
+      // The field sits between the GIF and the attach; attach and send are
+      // neighbours, not two ends of the composer.
+      expect(attach.dx - gif.dx, greaterThan(80));
+      expect(send.dx - attach.dx, lessThan(80));
+    });
+
     testWidgets('sending waits for a confirmed email first', (tester) async {
       signOutForTest();
       await MessagesService.instance.init();

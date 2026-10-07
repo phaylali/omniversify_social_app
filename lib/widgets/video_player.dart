@@ -1,6 +1,56 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+
+/// Which way up the screen should lock for a clip of this size.
+///
+/// Portrait keeps the phone upright — media_kit would otherwise turn it on
+/// its side for every clip, letterboxing a vertical video between two black
+/// columns. Landscape takes the width of the screen, as it always has. A
+/// clip whose size has not been read yet counts as landscape, which is
+/// exactly what happened before this existed.
+@visibleForTesting
+List<DeviceOrientation> orientationsForClip(int width, int height) {
+  const landscape = [
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ];
+  if (width <= 0 || height <= 0) return landscape;
+  // A square fills more of an upright screen than a sideways one.
+  return height >= width
+      ? const [DeviceOrientation.portraitUp]
+      : landscape;
+}
+
+/// Fullscreen in the shape of the clip rather than in one shape for all.
+///
+/// media_kit locks the phone to landscape every time, so watching a vertical
+/// video meant turning the device on its side to see a strip of picture
+/// between two black columns. The screen now follows what is on it: a
+/// portrait clip keeps the device upright, a landscape one takes the width.
+Future<void> _enterFullscreenFor(int width, int height) async {
+  await _setScreen(orientationsForClip(width, height));
+}
+
+/// Put the screen back: system bars restored, rotation handed to the sensor,
+/// which is how the rest of the app behaves — it never picks an orientation.
+Future<void> _exitToSensor() => _setScreen(null);
+
+/// [orientations] null means every orientation, i.e. let the sensor decide.
+Future<void> _setScreen(List<DeviceOrientation>? orientations) async {
+  try {
+    await SystemChrome.setEnabledSystemUIMode(
+      orientations == null ? SystemUiMode.manual : SystemUiMode.immersiveSticky,
+      overlays: orientations == null ? SystemUiOverlay.values : const [],
+    );
+    await SystemChrome.setPreferredOrientations(orientations ?? const []);
+  } catch (exception, stacktrace) {
+    // A device that refuses to rotate still plays the video.
+    debugPrint(exception.toString());
+    debugPrint(stacktrace.toString());
+  }
+}
 
 class AppVideoPlayer extends StatefulWidget {
   final String url;
@@ -8,12 +58,21 @@ class AppVideoPlayer extends StatefulWidget {
   final bool showControls;
   final BoxFit fit;
 
+  /// Size the player to the clip instead of to the box it was handed.
+  ///
+  /// A vertical video inside a fixed landscape box is a stamp-sized strip of
+  /// picture between two black bars. With this on, the frame takes the shape
+  /// of what it is actually playing — tall for a portrait clip, wide for a
+  /// landscape one — up to 220 on the long edge.
+  final bool hugVideo;
+
   const AppVideoPlayer({
     super.key,
     required this.url,
     this.autoPlay = false,
     this.showControls = true,
     this.fit = BoxFit.contain,
+    this.hugVideo = false,
   });
 
   @override
@@ -26,6 +85,12 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
   bool _showPlayOverlay = false;
   bool _isBuffering = false;
 
+  /// The clip's own size in pixels, once the header has been read. Until
+  /// then the box keeps the shape it has always had, rather than jumping
+  /// around while the file opens.
+  int? _videoWidth;
+  int? _videoHeight;
+
   @override
   void initState() {
     super.initState();
@@ -34,6 +99,14 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
 
     _player.stream.playing.listen((playing) {
       if (mounted) setState(() {});
+    });
+
+    _player.stream.width.listen((width) {
+      if (mounted) setState(() => _videoWidth = width);
+    });
+
+    _player.stream.height.listen((height) {
+      if (mounted) setState(() => _videoHeight = height);
     });
 
     _player.stream.buffering.listen((buffering) {
@@ -60,9 +133,21 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
     setState(() => _showPlayOverlay = false);
   }
 
+  /// The box this clip wants, or null when it should fill its parent — the
+  /// feed already wraps the player in the aspect ratio it wants.
+  Size? _box() {
+    if (!widget.hugVideo) return null;
+    final width = _videoWidth ?? 0;
+    final height = _videoHeight ?? 0;
+    if (width <= 0 || height <= 0) return const Size(220, 150);
+    const maxSide = 220.0;
+    final scale = maxSide / (width > height ? width : height);
+    return Size(width * scale, height * scale);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final player = GestureDetector(
       onTap: _togglePlay,
       child: Stack(
         alignment: Alignment.center,
@@ -70,6 +155,9 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
           Video(
             controller: _controller,
             fit: widget.fit,
+            onEnterFullscreen: () =>
+                _enterFullscreenFor(_videoWidth ?? 0, _videoHeight ?? 0),
+            onExitFullscreen: _exitToSensor,
           ),
 
           if (_isBuffering)
@@ -89,6 +177,10 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
         ],
       ),
     );
+
+    final box = _box();
+    if (box == null) return player;
+    return SizedBox(width: box.width, height: box.height, child: player);
   }
 }
 
@@ -261,6 +353,9 @@ class _ScrollVideoPlayerState extends State<ScrollVideoPlayer> {
                 Video(
                   controller: _controller,
                   fit: BoxFit.cover,
+                  onEnterFullscreen: () => _enterFullscreenFor(
+                      _player.state.width ?? 0, _player.state.height ?? 0),
+                  onExitFullscreen: _exitToSensor,
                 ),
                 if (_isBuffering)
                   const CircularProgressIndicator(

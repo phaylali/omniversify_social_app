@@ -215,6 +215,35 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Stage a GIF picked off the device.
+  ///
+  /// Deliberately local: the GIFs already saved are the ones worth sending,
+  /// and nothing is looked up on a stranger's server to send one. It goes
+  /// out as a picture — which is what a GIF is — and keeps its extension
+  /// through app storage, so it still moves for whoever receives it.
+  Future<void> _pickGif() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['gif'],
+      );
+      if (files.isEmpty) return;
+      final file = files.first;
+      final path = file.path;
+      if (path == null || !mounted) return;
+      setState(() {
+        _staged = _Staged(
+          kind: ChatAttachment.image,
+          path: path,
+          name: file.name,
+        );
+        _canSend = true;
+      });
+    } catch (_) {
+      // No picker, no GIF — and no error dialog in the middle of a chat.
+    }
+  }
+
   Future<void> _recordVoice() async {
     final recorded = await showModalBottomSheet<_Recorded>(
       context: context,
@@ -617,14 +646,14 @@ class _ChatScreenState extends State<ChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 IconButton(
-                  key: const ValueKey('chat-attach'),
-                  icon: const Icon(Icons.add_circle_outline),
-                  tooltip: 'Attach',
+                  key: const ValueKey('chat-gif'),
+                  icon: const Icon(Icons.gif),
+                  tooltip: 'GIF',
                   style: IconButton.styleFrom(
                     foregroundColor: gold,
                     disabledForegroundColor: cs.onSurface.withAlpha(70),
                   ),
-                  onPressed: _attach,
+                  onPressed: _pickGif,
                 ),
                 Expanded(
                   child: TextField(
@@ -646,6 +675,17 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                IconButton(
+                  key: const ValueKey('chat-attach'),
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'Attach',
+                  style: IconButton.styleFrom(
+                    foregroundColor: gold,
+                    disabledForegroundColor: cs.onSurface.withAlpha(70),
+                  ),
+                  onPressed: _attach,
+                ),
+                const SizedBox(width: 4),
                 IconButton(
                   key: const ValueKey('chat-send'),
                   icon: const Icon(Icons.arrow_upward, size: 20),
@@ -1183,12 +1223,14 @@ class _VideoBubbleState extends State<_VideoBubble> {
   @override
   Widget build(BuildContext context) {
     if (_playing) {
-      return SizedBox(
-        width: 220,
-        height: 150,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: AppVideoPlayer(url: widget.path, autoPlay: true),
+      // The player sizes itself to the clip, so a vertical video gets a
+      // vertical window instead of a strip of picture in a landscape box.
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: AppVideoPlayer(
+          url: widget.path,
+          autoPlay: true,
+          hugVideo: true,
         ),
       );
     }
@@ -1234,64 +1276,52 @@ class VideoTile extends StatelessWidget {
         child: SizedBox(
           width: 220,
           height: 150,
-          child: decoded == null
-              ? Container(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // The frame is the picture, and it is left alone: no name
+              // laid over it, no control parked in the middle of it. With
+              // nothing decoded — still cutting, an undecodable file, a
+              // browser that cannot cut one at all — the tile falls back to
+              // a black card that still says which file it is.
+              if (decoded == null)
+                Container(
                   color: Colors.black,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.play_circle_outline,
-                          size: 44, color: Colors.white70),
-                      const SizedBox(height: 6),
-                      Text(
-                        name ?? 'Video',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12.5),
-                      ),
-                    ],
+                  alignment: Alignment.center,
+                  child: Text(
+                    name ?? 'Video',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 12.5),
                   ),
                 )
-              : Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // The decoder hands back the frame at whatever size the
-                    // video is, so the decode is capped here: a 4K video
-                    // would otherwise cost ~33MB of bitmap per bubble, and
-                    // 440 pixels is all the 220-point tile can show.
-                    Image.memory(decoded,
-                        width: 220,
-                        height: 150,
-                        fit: BoxFit.cover,
-                        cacheWidth: 440),
-                    // The frame is the picture; the controls only ride on
-                    // top of it, so the tile reads as a video either way.
-                    const Center(
-                      child: Icon(Icons.play_circle_outline,
-                          size: 44, color: Colors.white70),
-                    ),
-                    if (name != null)
-                      Positioned(
-                        left: 8,
-                        right: 8,
-                        bottom: 6,
-                        child: Text(
-                          name!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12.5,
-                            shadows: [
-                              Shadow(blurRadius: 8, color: Colors.black87),
-                            ],
-                          ),
-                        ),
-                      ),
+              else
+                // The decoder hands back the frame at whatever size the
+                // video is, so the decode is capped here: a 4K video
+                // would otherwise cost ~33MB of bitmap per bubble, and
+                // 440 pixels is all the 220-point tile can show.
+                Image.memory(decoded,
+                    width: 220,
+                    height: 150,
+                    fit: BoxFit.cover,
+                    cacheWidth: 440),
+              // The control keeps to the corner so the frame underneath it
+              // stays readable, with a shadow to hold it over a bright one.
+              const Positioned(
+                top: 6,
+                right: 6,
+                child: Icon(
+                  Icons.play_arrow,
+                  size: 40,
+                  color: Colors.white70,
+                  shadows: [
+                    Shadow(blurRadius: 8, color: Colors.black87),
                   ],
                 ),
+              ),
+            ],
+          ),
         ),
       ),
     );
