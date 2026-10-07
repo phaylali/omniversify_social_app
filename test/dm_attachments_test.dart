@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -322,6 +325,56 @@ void main() {
       expect(find.byKey(const ValueKey('chat-attach-preview')), findsNothing);
       expect(find.text('report.pdf'), findsOneWidget);
       expect(find.text('Ready to send'), findsOneWidget);
+    });
+  });
+
+  group('video tile', () {
+    /// One pixel of JPEG — enough for [Image.memory] to be handed a real
+    /// frame, which is the whole difference between the two tiles below.
+    final frame = base64Decode(
+      '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkS'
+      'Ew8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJ'
+      'CQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy'
+      'MjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEA'
+      'AAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIh'
+      'MUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6'
+      'Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5i'
+      'ZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6er'
+      'x8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==',
+    );
+
+    Future<void> pumpTile(WidgetTester tester, {Uint8List? frame}) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: VideoTile(
+            path: '/docs/shared/v.mp4',
+            name: 'clip.mp4',
+            frame: frame,
+            onPlay: () {},
+          ),
+        ),
+      ));
+      await tester.pump();
+    }
+
+    testWidgets('the opening frame sits under the play control',
+        (tester) async {
+      await pumpTile(tester, frame: frame);
+
+      expect(find.byKey(const ValueKey('bubble-video')), findsOneWidget);
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+      expect(find.text('clip.mp4'), findsOneWidget);
+    });
+
+    testWidgets('with no frame it keeps the black card it always had',
+        (tester) async {
+      await pumpTile(tester);
+
+      expect(find.byKey(const ValueKey('bubble-video')), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+      expect(find.text('clip.mp4'), findsOneWidget);
     });
   });
 }

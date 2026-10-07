@@ -18,6 +18,8 @@ import '../services/file_store_stub.dart'
     if (dart.library.io) '../services/file_store.dart';
 import '../widgets/file_image_stub.dart'
     if (dart.library.io) '../widgets/file_image.dart';
+import '../services/video_thumb_stub.dart'
+    if (dart.library.io) '../services/video_thumb.dart';
 
 /// One direct message conversation: the thread, the bar to type in, and the
 /// things every chat screen offers — call buttons, a conversation menu,
@@ -497,7 +499,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case ChatAttachment.video:
         return Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: _VideoBubble(path: path, name: message.name, ink: ink),
+          child: _VideoBubble(path: path, name: message.name),
         );
       case ChatAttachment.audio:
         return Padding(
@@ -1149,11 +1151,10 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
 /// A video that stays a thumbnail until it is tapped, so a thread full of
 /// them does not spin up a player per bubble.
 class _VideoBubble extends StatefulWidget {
-  const _VideoBubble({required this.path, this.name, required this.ink});
+  const _VideoBubble({required this.path, this.name});
 
   final String path;
   final String? name;
-  final Color ink;
 
   @override
   State<_VideoBubble> createState() => _VideoBubbleState();
@@ -1161,6 +1162,23 @@ class _VideoBubble extends StatefulWidget {
 
 class _VideoBubbleState extends State<_VideoBubble> {
   bool _playing = false;
+
+  /// The opening frame, once one has been cut. Stays null while it decodes,
+  /// and for good if the file will not give one up — the tile then keeps the
+  /// placeholder it had before frames existed.
+  Uint8List? _frame;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFrame();
+  }
+
+  Future<void> _loadFrame() async {
+    final frame = await videoThumb(widget.path);
+    if (!mounted) return;
+    setState(() => _frame = frame);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1175,30 +1193,105 @@ class _VideoBubbleState extends State<_VideoBubble> {
       );
     }
 
+    return VideoTile(
+      path: widget.path,
+      name: widget.name,
+      frame: _frame,
+      onPlay: () => setState(() => _playing = true),
+    );
+  }
+}
+
+/// The 220×150 tile a video sits in: its first frame once one could be
+/// decoded, and a black card with the file's name when it could not.
+class VideoTile extends StatelessWidget {
+  const VideoTile({
+    super.key,
+    required this.path,
+    required this.onPlay,
+    this.name,
+    this.frame,
+  });
+
+  final String path;
+  final String? name;
+
+  /// JPEG bytes of the opening frame, or null when it is still being cut or
+  /// the platform produced none.
+  final Uint8List? frame;
+
+  final VoidCallback onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    final decoded = frame;
     return InkWell(
       key: const ValueKey('bubble-video'),
       borderRadius: BorderRadius.circular(10),
-      onTap: () => setState(() => _playing = true),
-      child: Container(
-        width: 220,
-        height: 150,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.play_circle_outline,
-                size: 44, color: Colors.white70),
-            const SizedBox(height: 6),
-            Text(
-              widget.name ?? 'Video',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, fontSize: 12.5),
-            ),
-          ],
+      onTap: onPlay,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          width: 220,
+          height: 150,
+          child: decoded == null
+              ? Container(
+                  color: Colors.black,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.play_circle_outline,
+                          size: 44, color: Colors.white70),
+                      const SizedBox(height: 6),
+                      Text(
+                        name ?? 'Video',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12.5),
+                      ),
+                    ],
+                  ),
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // The decoder hands back the frame at whatever size the
+                    // video is, so the decode is capped here: a 4K video
+                    // would otherwise cost ~33MB of bitmap per bubble, and
+                    // 440 pixels is all the 220-point tile can show.
+                    Image.memory(decoded,
+                        width: 220,
+                        height: 150,
+                        fit: BoxFit.cover,
+                        cacheWidth: 440),
+                    // The frame is the picture; the controls only ride on
+                    // top of it, so the tile reads as a video either way.
+                    const Center(
+                      child: Icon(Icons.play_circle_outline,
+                          size: 44, color: Colors.white70),
+                    ),
+                    if (name != null)
+                      Positioned(
+                        left: 8,
+                        right: 8,
+                        bottom: 6,
+                        child: Text(
+                          name!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12.5,
+                            shadows: [
+                              Shadow(blurRadius: 8, color: Colors.black87),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
         ),
       ),
     );
