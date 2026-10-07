@@ -56,6 +56,10 @@ void main() async {
   await DailyTasks.instance.init();
   // Posts you have written, before the feed first paints.
   await UserPosts.instance.init();
+  // Direct messages. Nothing else fills these — the drawer and the chat
+  // screen both read a map that starts empty, so an unhydrated service reads
+  // as "no conversations" until the first send happens to run init for you.
+  await MessagesService.instance.init();
   // Signed-in person, if this device still has a live session. Not awaited:
   // a slow or absent network must never hold up the first frame.
   unawaited(AccountService.instance.restore());
@@ -830,6 +834,15 @@ class DmsDrawer extends StatefulWidget {
 class _DmsDrawerState extends State<DmsDrawer> {
   /// 0 = message threads, 1 = the people you're acquainted with.
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // The list below reads the thread map directly and starts from an empty
+    // one, so the drawer fills it itself rather than trusting that something
+    // upstream already did. [MessagesService.init] is idempotent.
+    unawaited(MessagesService.instance.init());
+  }
 
   /// Placeholder acquaintances — real ones take over once get-acquainted
   /// requests can be accepted.

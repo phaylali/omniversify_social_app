@@ -273,4 +273,55 @@ void main() {
           isEmpty);
     });
   });
+
+  group('staged attachment', () {
+    Future<void> pumpStaged(
+      WidgetTester tester, {
+      required ChatAttachment kind,
+      String? name,
+      int? seconds,
+    }) async {
+      final cs = ThemeData().colorScheme;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: StagedAttachmentBar(
+            kind: kind,
+            path: kind == ChatAttachment.audio
+                ? '/tmp/voice.m4a'
+                : '/docs/report.pdf',
+            name: name,
+            seconds: seconds,
+            cs: cs,
+            gold: cs.primary,
+            onRemove: () {},
+          ),
+        ),
+      ));
+      await tester.pump();
+    }
+
+    testWidgets('a staged voice note can be listened to before it is sent',
+        (tester) async {
+      await pumpStaged(tester, kind: ChatAttachment.audio, seconds: 7);
+
+      expect(find.byKey(const ValueKey('chat-attach-preview')), findsOneWidget);
+      expect(find.text('Voice note · 0:07'), findsOneWidget);
+      expect(find.text('Tap to listen before sending'), findsOneWidget);
+
+      // Playing it is not sending it, and it does not drop the note either.
+      await tester.tap(find.byKey(const ValueKey('chat-attach-preview')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('chat-attach-preview')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-attach-remove')), findsOneWidget);
+    });
+
+    testWidgets('anything that cannot be played shows the plain row',
+        (tester) async {
+      await pumpStaged(tester, kind: ChatAttachment.file, name: 'report.pdf');
+
+      expect(find.byKey(const ValueKey('chat-attach-preview')), findsNothing);
+      expect(find.text('report.pdf'), findsOneWidget);
+      expect(find.text('Ready to send'), findsOneWidget);
+    });
+  });
 }

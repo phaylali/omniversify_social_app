@@ -77,8 +77,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
     // The conversation is open, so whatever was waiting in it is read now.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) MessagesService.instance.markRead(widget.handle);
+    // Loading comes first: the thread starts empty until init fills it, and
+    // markRead would otherwise return early on an unread set it cannot see.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await MessagesService.instance.init();
+      if (!mounted) return;
+      await MessagesService.instance.markRead(widget.handle);
     });
   }
 
@@ -341,12 +346,14 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Newest first: a day chip above each group, ready for a reversed list.
+  /// A chip before each day's group, then the whole thing reversed: the list
+  /// runs newest-first so [ListView.reverse] can scroll from the bottom, and
+  /// reversing turns "chip first" into "chip above", which is where a day
+  /// divider belongs.
   static List<_Row> _rows(List<ChatMessage> messages) {
     final rows = <_Row>[];
     DateTime? seen;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      final message = messages[i];
+    for (final message in messages) {
       final day =
           DateTime(message.at.year, message.at.month, message.at.day);
       if (day != seen) {
@@ -355,7 +362,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       rows.add(_Row.message(message));
     }
-    return rows;
+    return rows.reversed.toList();
   }
 
   static String _dayLabel(DateTime day) {
@@ -648,92 +655,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// What is about to go out, with a way to change their mind before it does.
   Widget _stagedRow(_Staged staged, ColorScheme cs, Color gold) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: gold.withAlpha(70)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: staged.kind == ChatAttachment.image
-                  ? fileImage(
-                      staged.path,
-                      width: 44,
-                      height: 44,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) =>
-                          Icon(Icons.image_outlined, color: gold),
-                    )
-                  : Icon(_stagedIcon(staged.kind), color: gold, size: 26),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _stagedTitle(staged),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  'Ready to send',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: cs.onSurface.withAlpha(150),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            key: const ValueKey('chat-attach-remove'),
-            icon: const Icon(Icons.close, size: 18),
-            tooltip: 'Remove attachment',
-            onPressed: _clearStaged,
-          ),
-        ],
-      ),
+    return StagedAttachmentBar(
+      kind: staged.kind,
+      path: staged.path,
+      name: staged.name,
+      seconds: staged.seconds,
+      cs: cs,
+      gold: gold,
+      onRemove: _clearStaged,
     );
-  }
-
-  static IconData _stagedIcon(ChatAttachment kind) {
-    switch (kind) {
-      case ChatAttachment.image:
-        return Icons.image_outlined;
-      case ChatAttachment.video:
-        return Icons.videocam_outlined;
-      case ChatAttachment.audio:
-        return Icons.mic_none_outlined;
-      case ChatAttachment.file:
-        return Icons.insert_drive_file_outlined;
-    }
-  }
-
-  static String _stagedTitle(_Staged staged) {
-    switch (staged.kind) {
-      case ChatAttachment.audio:
-        return 'Voice note · ${ChatMessage.clockDuration(staged.seconds)}';
-      case ChatAttachment.file:
-      case ChatAttachment.image:
-      case ChatAttachment.video:
-        return staged.name ?? staged.kind.label;
-    }
   }
 
   // ── Long-press on the message ────────────────────────────────────────
@@ -1265,6 +1195,210 @@ class _VideoBubbleState extends State<_VideoBubble> {
 }
 
 /// A voice note: play or pause, a waveform, and how long it runs.
+/// The attachment waiting in the composer, with a way to change your mind
+/// before it goes: drop it, or — for a voice note — listen to it first.
+class StagedAttachmentBar extends StatelessWidget {
+  const StagedAttachmentBar({
+    super.key,
+    required this.kind,
+    required this.path,
+    required this.cs,
+    required this.gold,
+    required this.onRemove,
+    this.name,
+    this.seconds,
+  });
+
+  final ChatAttachment kind;
+  final String path;
+  final String? name;
+  final int? seconds;
+  final ColorScheme cs;
+  final Color gold;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: gold.withAlpha(70)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: kind == ChatAttachment.image
+                  ? fileImage(
+                      path,
+                      width: 44,
+                      height: 44,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          Icon(Icons.image_outlined, color: gold),
+                    )
+                  : kind == ChatAttachment.audio
+                      // Play rather than a microphone: this one is already
+                      // recorded, and it may not be what you wanted to send.
+                      ? AudioPreviewButton(
+                          key: const ValueKey('chat-attach-preview'),
+                          path: path,
+                          color: gold,
+                          size: 40,
+                        )
+                      : Icon(_stagedIcon(kind), color: gold, size: 26),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _stagedTitle(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  kind == ChatAttachment.audio
+                      ? 'Tap to listen before sending'
+                      : 'Ready to send',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: cs.onSurface.withAlpha(150),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('chat-attach-remove'),
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Remove attachment',
+            onPressed: onRemove,
+          ),
+        ],
+      ),
+    );
+  }
+
+  static IconData _stagedIcon(ChatAttachment kind) {
+    switch (kind) {
+      case ChatAttachment.image:
+        return Icons.image_outlined;
+      case ChatAttachment.video:
+        return Icons.videocam_outlined;
+      case ChatAttachment.audio:
+        return Icons.mic_none_outlined;
+      case ChatAttachment.file:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  String _stagedTitle() {
+    switch (kind) {
+      case ChatAttachment.audio:
+        return 'Voice note · ${ChatMessage.clockDuration(seconds)}';
+      case ChatAttachment.file:
+      case ChatAttachment.image:
+      case ChatAttachment.video:
+        return name ?? kind.label;
+    }
+  }
+}
+
+/// Plays a local audio file: the sent bubble uses it, and so does the
+/// composer, so a voice note can be listened to before it is sent — the words
+/// may not be the ones you meant, or the room may have been too loud.
+class AudioPreviewButton extends StatefulWidget {
+  const AudioPreviewButton({
+    super.key,
+    required this.path,
+    required this.color,
+    this.size = 34,
+    this.onPlayingChanged,
+  });
+
+  final String path;
+  final Color color;
+  final double size;
+
+  /// Lets whatever holds this button mirror the state, as the wave does.
+  final ValueChanged<bool>? onPlayingChanged;
+
+  @override
+  State<AudioPreviewButton> createState() => AudioPreviewButtonState();
+}
+
+class AudioPreviewButtonState extends State<AudioPreviewButton> {
+  AudioPlayer? _player;
+  bool _playing = false;
+
+  @override
+  void dispose() {
+    // Stops anything still running: a preview that outlives its row would be
+    // sound with nowhere to look.
+    _player?.dispose();
+    super.dispose();
+  }
+
+  Future<void> toggle() async {
+    if (_playing) {
+      await _player?.stop();
+      if (!mounted) return;
+      setState(() => _playing = false);
+      widget.onPlayingChanged?.call(false);
+      return;
+    }
+
+    final player = AudioPlayer();
+    _player?.dispose();
+    _player = player;
+    player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() => _playing = false);
+      widget.onPlayingChanged?.call(false);
+    });
+
+    try {
+      await player.play(DeviceFileSource(widget.path));
+      if (!mounted) return;
+      setState(() => _playing = true);
+      widget.onPlayingChanged?.call(true);
+    } catch (_) {
+      // A file that went missing plays nothing rather than throwing.
+      if (!mounted) return;
+      setState(() => _playing = false);
+      widget.onPlayingChanged?.call(false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: toggle,
+      child: Icon(
+        _playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
+        size: widget.size,
+        color: widget.color,
+      ),
+    );
+  }
+}
+
 class _AudioBubble extends StatefulWidget {
   const _AudioBubble({
     required this.path,
@@ -1281,37 +1415,11 @@ class _AudioBubble extends StatefulWidget {
 }
 
 class _AudioBubbleState extends State<_AudioBubble> {
-  AudioPlayer? _player;
+  /// The button owns the player; the bubble only borrows it, so tapping the
+  /// wave does the same thing as tapping the icon.
+  final GlobalKey<AudioPreviewButtonState> _play =
+      GlobalKey<AudioPreviewButtonState>();
   bool _playing = false;
-
-  @override
-  void dispose() {
-    _player?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _toggle() async {
-    if (_playing) {
-      await _player?.stop();
-      if (mounted) setState(() => _playing = false);
-      return;
-    }
-
-    final player = AudioPlayer();
-    _player?.dispose();
-    _player = player;
-    player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() => _playing = false);
-    });
-
-    try {
-      await player.play(DeviceFileSource(widget.path));
-      if (mounted) setState(() => _playing = true);
-    } catch (_) {
-      // A file that went missing plays nothing rather than throwing.
-      if (mounted) setState(() => _playing = false);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1319,14 +1427,17 @@ class _AudioBubbleState extends State<_AudioBubble> {
     return InkWell(
       key: const ValueKey('bubble-audio'),
       borderRadius: BorderRadius.circular(8),
-      onTap: _toggle,
+      onTap: () => _play.currentState?.toggle(),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            _playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
-            size: 34,
+          AudioPreviewButton(
+            key: _play,
+            path: widget.path,
             color: ink,
+            onPlayingChanged: (playing) {
+              if (mounted) setState(() => _playing = playing);
+            },
           ),
           const SizedBox(width: 8),
           SizedBox(width: 120, child: _wave(ink)),

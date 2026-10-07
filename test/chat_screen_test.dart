@@ -49,6 +49,17 @@ void main() {
   });
 
   group('DMs drawer', () {
+    testWidgets('the conversations are there before anything has been sent',
+        (tester) async {
+      // setUp only resets. Nothing has hydrated the thread map yet — the
+      // exact state a cold start opens the drawer in.
+      await _openDrawer(tester);
+
+      expect(find.byKey(const ValueKey('dm-@ahmed_m')), findsOneWidget);
+      expect(find.text("Sure, let's watch it together!"), findsOneWidget);
+      expect(find.text('2m'), findsOneWidget);
+    });
+
     testWidgets('every conversation with something in it is listed',
         (tester) async {
       await MessagesService.instance.init();
@@ -108,6 +119,30 @@ void main() {
   });
 
   group('chat', () {
+    testWidgets('the history is waiting before the first message is sent',
+        (tester) async {
+      // No init() here either: opening a conversation has to load it.
+      await _openChat(tester);
+
+      expect(find.text("Sure, let's watch it together!"), findsOneWidget);
+      expect(find.text('Say hi to Ahmed 👋'), findsNothing);
+      expect(find.text('Today'), findsOneWidget);
+    });
+
+    testWidgets('the day chip heads its group instead of trailing it',
+        (tester) async {
+      await _openChat(tester);
+
+      // The list is reversed, so a chip emitted before its group would sit at
+      // the bottom — underneath the very messages it is meant to head.
+      final newest =
+          MessagesService.instance.thread('@ahmed_m').last.text;
+      final chip = tester.getTopLeft(find.text('Today'));
+      final message = tester.getTopLeft(find.text(newest).first);
+
+      expect(chip.dy, lessThan(message.dy));
+    });
+
     testWidgets('sending writes into the thread and stamps it Today',
         (tester) async {
       await MessagesService.instance.init();
