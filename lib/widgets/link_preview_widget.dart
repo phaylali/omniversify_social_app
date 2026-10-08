@@ -14,6 +14,11 @@ class LinkPreviewWidget extends StatefulWidget {
 class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
   LinkPreviewData? _data;
   bool _loading = true;
+  /// The picture on show: the fetched one until it proves not to exist,
+  /// at which point the fallback takes its place.
+  String? _imageUrl;
+  /// Bumped on every fetch, so a slow answer cannot overwrite a newer one.
+  int _token = 0;
 
   @override
   void initState() {
@@ -21,9 +26,30 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(covariant LinkPreviewWidget old) {
+    super.didUpdateWidget(old);
+    // The same slot, a different link: what was fetched for the old one is
+    // somebody else's metadata. Drop it here — this rebuild follows on its
+    // own — and go and get the new one, once the typing has settled.
+    if (old.url != widget.url) {
+      _data = null;
+      _imageUrl = null;
+      _loading = true;
+      _load(delay: const Duration(milliseconds: 300));
+    }
+  }
+
+  Future<void> _load({Duration delay = Duration.zero}) async {
+    final token = ++_token;
+    if (delay != Duration.zero) await Future<void>.delayed(delay);
     final data = await LinkPreviewService.fetchPreview(widget.url);
-    if (mounted) setState(() { _data = data; _loading = false; });
+    if (!mounted || token != _token) return;
+    setState(() {
+      _data = data;
+      _imageUrl = data?.imageUrl;
+      _loading = false;
+    });
   }
 
   String get _domain {
@@ -104,12 +130,9 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
                 height: 160,
                 width: double.infinity,
                 child: Image.network(
-                  _data!.imageUrl,
+                  _imageUrl ?? _data!.imageUrl,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: cs.surfaceContainerHighest,
-                    child: const Center(child: AppLogo(size: 48, fit: BoxFit.contain)),
-                  ),
+                  errorBuilder: (_, __, ___) => _imageGone(cs),
                 ),
               ),
             Padding(
@@ -158,6 +181,22 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
           ],
         ),
       ),
+    );
+  }
+
+  /// The frame the site advertised has gone missing — YouTube keeps the
+  /// big one for some videos only. Swap in the smaller one, once, and
+  /// hold the logo until it lands.
+  Widget _imageGone(ColorScheme cs) {
+    final fallback = _data?.fallbackImageUrl;
+    if (fallback != null && fallback != _imageUrl) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _imageUrl = fallback);
+      });
+    }
+    return Container(
+      color: cs.surfaceContainerHighest,
+      child: const Center(child: AppLogo(size: 48, fit: BoxFit.contain)),
     );
   }
 

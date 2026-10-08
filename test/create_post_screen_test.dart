@@ -10,6 +10,7 @@ import 'package:omniversify_social_app/screens/account_screen.dart';
 import 'package:omniversify_social_app/screens/create_post_screen.dart';
 import 'package:omniversify_social_app/data/post_state.dart';
 import 'package:omniversify_social_app/services/user_posts.dart';
+import 'package:omniversify_social_app/widgets/link_preview_widget.dart';
 
 import 'account_fixtures.dart';
 
@@ -67,6 +68,36 @@ void main() {
     await tester.enterText(find.byType(TextField), 'omniversify.com');
     await tester.pump();
     expect(_postButton(tester).onPressed, isNotNull);
+  });
+
+  testWidgets('the preview follows the link in the box, not the words around it',
+      (tester) async {
+    await _openComposer(tester);
+    await tester.tap(find.text('Link'));
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField),
+        'watch this https://www.instagram.com/reel/AbCdEf12345/');
+    await tester.pump();
+
+    final preview =
+        tester.widget<LinkPreviewWidget>(find.byType(LinkPreviewWidget));
+    expect(preview.url, 'https://www.instagram.com/reel/AbCdEf12345/');
+
+    // Words with no link among them get no preview at all — there is
+    // nothing to fetch and nothing to say about them.
+    await tester.enterText(find.byType(TextField), 'go and read this');
+    await tester.pump();
+    expect(find.byType(LinkPreviewWidget), findsNothing);
+
+    // And a link is not a sentence: nothing capitalises itself.
+    await tester.enterText(
+        find.byType(TextField), 'https://youtube.com/watch?v=dQw4w9WgXcQ');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'https://youtube.com/watch?v=dQw4w9WgXcQ',
+    );
   });
 
   testWidgets('a thought lands in front of the feed and can be liked',

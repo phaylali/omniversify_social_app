@@ -7,6 +7,7 @@ import '../data/dummy_data.dart';
 import '../data/post_state.dart';
 import '../models/post.dart';
 import '../services/account_gate.dart';
+import '../services/link_preview_service.dart';
 import '../services/user_posts.dart';
 import '../widgets/action_sheet.dart';
 import '../widgets/app_logo.dart';
@@ -84,6 +85,15 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     return uri != null &&
         uri.host.contains('.') &&
         !uri.host.endsWith('.');
+  }
+
+  /// The link worth previewing: the first real one in the box — a preview
+  /// of the words around it would only ever guess.
+  String? get _link {
+    final urls = LinkPreviewService.extractUrls(_text.text);
+    final value = urls.isNotEmpty ? urls.first : _text.text.trim();
+    if (!_looksLikeUrl(value)) return null;
+    return value.contains('://') ? value : 'https://$value';
   }
 
   String get _hint {
@@ -249,6 +259,11 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
             maxLength: _kind == ComposerKind.link ? 2048 : 5000,
             keyboardType:
                 _kind == ComposerKind.link ? TextInputType.url : TextInputType.multiline,
+            // A link is not a sentence: nothing here should come out as
+            // `Https://…`.
+            textCapitalization: _kind == ComposerKind.link
+                ? TextCapitalization.none
+                : TextCapitalization.sentences,
             decoration: InputDecoration(
               hintText: _hint,
               counterText: '',
@@ -257,9 +272,9 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
             ),
             onChanged: (_) => setState(() {}),
           ),
-          if (_kind == ComposerKind.link && _text.text.trim().isNotEmpty) ...[
+          if (_kind == ComposerKind.link && _link != null) ...[
             const SizedBox(height: 4),
-            LinkPreviewWidget(url: _text.text.trim()),
+            LinkPreviewWidget(url: _link!),
           ],
           const Divider(height: 28),
           _visibilityRow(cs, gold),
