@@ -445,17 +445,17 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _bubble(ChatMessage message, ColorScheme cs, Color gold) {
     final mine = message.fromMe;
     // A photo and a video are the picture: nothing behind them. Everything
-    // else is gold — dimmed, because at full strength it shouts over the
-    // thread, but not so far that the dark words on it lose their footing.
+    // else says who sent it — mine as a wash of gold at a fifth of its
+    // strength, barely there but unmistakably mine; theirs as an outline
+    // with nothing behind it, so the thread reads by shape, not by shade.
     final media = message.attachment == ChatAttachment.image ||
         message.attachment == ChatAttachment.video;
-    final fill = media
-        ? Colors.transparent
-        : mine
-            ? gold.withAlpha(179)
-            : cs.surfaceContainerHighest;
-    // Light words once the gold is gone, dark words while it is there.
-    final ink = mine && !media ? cs.onPrimary : cs.onSurface;
+    final fill =
+        media || !mine ? Colors.transparent : gold.withAlpha(51);
+    // A fifth of the gold is too faint to carry dark words, so both sides
+    // speak in the thread's own light ink now.
+    final ink = cs.onSurface;
+    final outline = !mine && !media;
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(16),
       topRight: const Radius.circular(16),
@@ -474,6 +474,7 @@ class _ChatScreenState extends State<ChatScreen> {
         decoration: BoxDecoration(
           color: fill,
           borderRadius: radius,
+          border: outline ? Border.all(color: gold.withAlpha(110)) : null,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
