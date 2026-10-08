@@ -89,6 +89,28 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
   /// is the viewer's decision to make, not the video's.
   bool _muted = true;
 
+  /// The same truth, in a form the fullscreen controls can hear.
+  ///
+  /// That route keeps its own copy of the controls, built before it opened,
+  /// so a rebuild of this widget never reaches it — and media_kit's volume
+  /// stream does not report our own changes back to it either, which leaves
+  /// the speaker switch showing whatever state it had on the way in. A
+  /// notifier handed over at build time survives both of those.
+  final ValueNotifier<double> _volume = ValueNotifier<double>(0);
+
+  /// The clip's player as it sits inside the video's own context.
+  ///
+  /// Fullscreen is built from that context, not from ours — media_kit walks
+  /// up from a point inside the video to find it — so this is the only handle
+  /// that can open it. The controls builder is the one place that is handed
+  /// the video itself, which makes it the one place this can be picked up.
+  VideoState? _videoState;
+
+  /// Whether the fullscreen route is currently up. Its copy of the controls
+  /// rebuilds these very controls, and that copy must not displace the one
+  /// still standing behind it.
+  bool _inFullscreen = false;
+
   /// The clip's own size in pixels, once the header has been read. Until
   /// then the box keeps the shape it has always had, rather than jumping
   /// around while the file opens.
@@ -132,20 +154,45 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
 
   @override
   void dispose() {
+    // Safe while the fullscreen controls still hold a listener: removing a
+    // listener from a disposed ChangeNotifier is explicitly allowed.
+    _volume.dispose();
     _player.dispose();
     super.dispose();
-  }
-
-  void _togglePlay() {
-    _player.playOrPause();
-    setState(() => _showPlayOverlay = false);
   }
 
   void _toggleMute() {
     setState(() => _muted = !_muted);
     // 0 is silent, 100 is as loud as the clip was mastered — media_kit's
     // volume runs to 100, not to 1.
-    _player.setVolume(_muted ? 0 : 100);
+    final volume = _muted ? 0.0 : 100.0;
+    _volume.value = volume;
+    _player.setVolume(volume);
+  }
+
+  /// A tap on the picture means "give me the whole screen", not "pause".
+  ///
+  /// Pausing was never what anyone wanted from that tap: the controls that
+  /// pause, resume and unmute are all waiting on the other side of
+  /// fullscreen, and they are the ones that should be driving playback.
+  void _openFullscreen() {
+    if (!_player.state.playing) {
+      // Opening fullscreen onto a frozen frame is only half the trip.
+      _player.play();
+      setState(() => _showPlayOverlay = false);
+    }
+    final state = _videoState;
+    if (_inFullscreen || state == null || !state.mounted) return;
+    _inFullscreen = true;
+    state.enterFullscreen();
+  }
+
+  /// Leaving fullscreen: back to the sensor, and let the controls that were
+  /// on screen behind the route hand us the video again.
+  Future<void> _leaveFullscreen() {
+    _inFullscreen = false;
+    if (mounted) setState(() {});
+    return _exitToSensor();
   }
 
   /// The box this clip wants, or null when it should fill its parent — the
@@ -163,7 +210,7 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
   @override
   Widget build(BuildContext context) {
     final video = GestureDetector(
-      onTap: _togglePlay,
+      onTap: _openFullscreen,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -178,20 +225,16 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
               bottomButtonBar: [
                 MaterialPositionIndicator(),
                 Spacer(),
-                // Read from the player rather than from this widget: the
-                // fullscreen route keeps a copy of this bar built before it
-                // opened, and the copy must still follow the volume.
-                StreamBuilder<double>(
-                  stream: _player.stream.volume,
-                  initialData: _muted ? 0 : 100,
-                  builder: (context, snapshot) {
-                    final volume = snapshot.data ?? 100;
-                    return MuteButton(
-                      muted: volume == 0,
-                      filled: false,
-                      onToggle: _toggleMute,
-                    );
-                  },
+                // Handed over as a notifier, not read back from the player:
+                // this bar's copy was built before the route opened, so it
+                // hears nothing this widget does — only the notifier travels.
+                ValueListenableBuilder<double>(
+                  valueListenable: _volume,
+                  builder: (context, volume, _) => MuteButton(
+                    muted: volume == 0,
+                    filled: false,
+                    onToggle: _toggleMute,
+                  ),
                 ),
                 MaterialFullscreenButton(),
               ],
@@ -199,9 +242,19 @@ class _AppVideoPlayerState extends State<AppVideoPlayer> {
             child: Video(
               controller: _controller,
               fit: widget.fit,
+              controls: (state) {
+                // The only hand-over point where the video itself is
+                // offered to us, and the one place a context inside it can
+                // be picked up — which is what opening fullscreen needs.
+                // The fullscreen route rebuilds these controls too, so
+                // while it is up its copy must not displace the one on
+                // screen behind it.
+                if (!_inFullscreen) _videoState = state;
+                return AdaptiveVideoControls(state);
+              },
               onEnterFullscreen: () =>
                   _enterFullscreenFor(_videoWidth ?? 0, _videoHeight ?? 0),
-              onExitFullscreen: _exitToSensor,
+              onExitFullscreen: _leaveFullscreen,
             ),
           ),
 
