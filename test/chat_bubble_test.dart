@@ -51,8 +51,8 @@ void main() {
 
     final mine = bubbleOf(tester, 'On my way');
 
-    // 0.2 of the gold: a wash you can just make out, nothing more.
-    expect(mine.color?.a, moreOrLessEquals(0.2, epsilon: 0.005));
+    // 0.1 of the gold: a wash you can just make out, nothing more.
+    expect(mine.color?.a, moreOrLessEquals(0.1, epsilon: 0.005));
     expect(mine.border, isNull);
   });
 
@@ -83,5 +83,28 @@ void main() {
 
     expect(mine.color, Colors.transparent);
     expect(mine.border, isNull);
+  });
+
+  testWidgets('the message field is a stadium in the same faint gold',
+      (tester) async {
+    await MessagesService.instance.init();
+    await _openChat(tester);
+
+    final decoration = tester.widget<TextField>(find.byType(TextField)).decoration!;
+
+    // The same tenth of the gold the bubbles carry…
+    expect(decoration.fillColor?.a, moreOrLessEquals(0.1, epsilon: 0.005));
+    // …a full stadium rather than a box, in every state it draws in…
+    for (final border in [
+      decoration.border,
+      decoration.enabledBorder,
+      decoration.focusedBorder,
+    ]) {
+      expect(border, isA<OutlineInputBorder>());
+      final outline = border as OutlineInputBorder;
+      expect(outline.borderRadius, BorderRadius.circular(28));
+      // …and nothing drawn around it.
+      expect(outline.borderSide.style, BorderStyle.none);
+    }
   });
 }

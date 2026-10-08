@@ -445,14 +445,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _bubble(ChatMessage message, ColorScheme cs, Color gold) {
     final mine = message.fromMe;
     // A photo and a video are the picture: nothing behind them. Everything
-    // else says who sent it — mine as a wash of gold at a fifth of its
+    // else says who sent it — mine as a wash of gold at a tenth of its
     // strength, barely there but unmistakably mine; theirs as an outline
     // with nothing behind it, so the thread reads by shape, not by shade.
     final media = message.attachment == ChatAttachment.image ||
         message.attachment == ChatAttachment.video;
     final fill =
-        media || !mine ? Colors.transparent : gold.withAlpha(51);
-    // A fifth of the gold is too faint to carry dark words, so both sides
+        media || !mine ? Colors.transparent : gold.withAlpha(25);
+    // A tenth of the gold is too faint to carry dark words, so both sides
     // speak in the thread's own light ink now.
     final ink = cs.onSurface;
     final outline = !mine && !media;
@@ -633,6 +633,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ── The composer ─────────────────────────────────────────────────────
 
+  /// The composer's shape: a full stadium, with no line around it.
+  static final OutlineInputBorder _stadium = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(28),
+    borderSide: BorderSide.none,
+  );
+
   Widget _composer(ColorScheme cs, Color gold) {
     final staged = _staged;
     return SafeArea(
@@ -662,16 +668,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     minLines: 1,
                     maxLines: 4,
                     textCapitalization: TextCapitalization.sentences,
+                    // A stadium, not a box: the same faint gold the bubbles
+                    // carry, and no line around it — the theme's outlined
+                    // square would only fight the thread it sits under.
                     decoration: InputDecoration(
                       hintText: 'Message $_name…',
                       filled: true,
-                      fillColor: cs.surfaceContainerHighest,
+                      fillColor: gold.withAlpha(25),
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 11),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
+                          horizontal: 20, vertical: 11),
+                      border: _stadium,
+                      enabledBorder: _stadium,
+                      focusedBorder: _stadium,
                     ),
                   ),
                 ),
